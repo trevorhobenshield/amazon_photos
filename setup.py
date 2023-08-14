@@ -1,3 +1,5 @@
+from textwrap import dedent
+
 from setuptools import find_packages, setup
 from pathlib import Path
 
@@ -21,8 +23,7 @@ setup(
     author=about['__author__'],
     description=about['__description__'],
     license=about['__license__'],
-    long_description='''
-    
+    long_description=dedent('''
     # Amazon Photos API
     
     ## Table of Contents
@@ -56,7 +57,7 @@ setup(
     
     Example query:
     
-    ```
+    ```text
     type:(PHOTOS OR VIDEOS)
     AND things:(plant AND beach OR moon)
     AND timeYear:(2019)
@@ -73,7 +74,10 @@ setup(
     
     ap = Photos()
     
-    # query your Amazon Photos library
+    # get entire Amazon Photos library
+    ap.query("type:(PHOTOS OR VIDEOS)")
+    
+    # query Amazon Photos library for specific photos/videos
     ap.query("type:(PHOTOS OR VIDEOS) AND things:(plant AND beach OR moon) AND timeYear:(2023) AND timeMonth:(8) AND timeDay:(14) AND location:(CAN#BC#Vancouver)")
     
     # convenience method to get all photos
@@ -126,7 +130,7 @@ setup(
     | sort            | str  | `"['contentProperties.contentDate DESC']"`<br/>`"['contentProperties.contentDate ASC']"`<br/>`"['createdDate DESC']"`<br/>`"['createdDate ASC']"`<br/>`"['name DESC']"`<br/>`"['name ASC']"`<br/><br/>default: `"['contentProperties.contentDate DESC']"` |
     | tempLink        | str  | `"false"`<br/>`"true"`<br/><br/>default: `"false"`                                                                                                                                                                                                        |             |
 
-    ''',
+    '''),
     python_requires=">=3.10.10",
     long_description_content_type='text/markdown',
     author_email='trevorhobenshield@gmail.com',

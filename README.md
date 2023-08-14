@@ -31,7 +31,7 @@ at-acbca=...
 
 Example query:
 
-```
+```text
 type:(PHOTOS OR VIDEOS)
 AND things:(plant AND beach OR moon)
 AND timeYear:(2019)
@@ -48,7 +48,10 @@ from amazon_photos import Photos
 
 ap = Photos()
 
-# query your Amazon Photos library
+# get entire Amazon Photos library
+ap.query("type:(PHOTOS OR VIDEOS)")
+
+# query Amazon Photos library for specific photos/videos
 ap.query("type:(PHOTOS OR VIDEOS) AND things:(plant AND beach OR moon) AND timeYear:(2023) AND timeMonth:(8) AND timeDay:(14) AND location:(CAN#BC#Vancouver)")
 
 # convenience method to get all photos
