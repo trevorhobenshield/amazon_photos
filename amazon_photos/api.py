@@ -179,7 +179,7 @@ class Photos:
         )
         return r.json()
 
-    def query(self, filters: str, offset: int = 0, limit: int = math.inf, out: str = 'media.json', as_df: bool = True) -> list[dict] | pd.DataFrame:
+    def query(self, filters: str, offset: int = 0, limit: int = math.inf, out: str = 'media.parquet', as_df: bool = True) -> list[dict] | pd.DataFrame:
         """
         Search all media in Amazon Photos
 
