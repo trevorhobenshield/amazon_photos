@@ -9,7 +9,7 @@ install_requires = [
     'uvloop; platform_system != "Windows"',
     'aiofiles',
     'orjson',
-    'httpx',
+    'httpx[http2]',
     'pandas',
     'python-dotenv',
 ]
