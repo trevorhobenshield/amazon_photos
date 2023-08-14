@@ -74,7 +74,6 @@ class Photos:
         Generic method to process collections of async partials
 
         @param fns: list or generator containing async partials
-        @param kwargs: optional kwargs to pass to tqdm to describe process
         @return: list of results
         """
         client = AsyncClient(
@@ -87,7 +86,8 @@ class Photos:
         async with client as c:
             return await tqdm_asyncio.gather(*(fn(client=c) for fn in fns), desc=kwargs.get('desc'))
 
-    async def async_backoff(self, fn, *args, m: int = 20, b: int = 2, max_retries: int = 8, **kwargs) -> any:
+    @staticmethod
+    async def async_backoff(fn, *args, m: int = 20, b: int = 2, max_retries: int = 8, **kwargs) -> any:
         """Async exponential backoff"""
         for i in range(max_retries + 1):
             try:
@@ -105,7 +105,8 @@ class Photos:
                 logger.debug(f'Retrying in {f"{t:.2f}"} seconds\t\t{e}')
                 await asyncio.sleep(t)
 
-    def backoff(self, fn, *args, m: int = 20, b: int = 2, max_retries: int = 8, **kwargs) -> any:
+    @staticmethod
+    def backoff(fn, *args, m: int = 20, b: int = 2, max_retries: int = 8, **kwargs) -> any:
         """Exponential backoff"""
         for i in range(max_retries + 1):
             try:
