@@ -32,6 +32,7 @@ at-acbca=...
 Example query:
 
 #### `drive/v1/search`
+
 ```text
 type:(PHOTOS OR VIDEOS)
 AND things:(plant AND beach OR moon)
@@ -43,6 +44,7 @@ AND people:(CyChdySYdfj7DHsjdSHdy)
 ```
 
 #### `/drive/v1/nodes`
+
 ```
 kind:(FILE* OR FOLDER*)
 AND contentProperties.contentType:(image* OR video*)
@@ -62,7 +64,8 @@ ap = Photos()
 ap.query("type:(PHOTOS OR VIDEOS)")
 
 # query Amazon Photos library for specific photos/videos
-ap.query("type:(PHOTOS OR VIDEOS) AND things:(plant AND beach OR moon) AND timeYear:(2023) AND timeMonth:(8) AND timeDay:(14) AND location:(CAN#BC#Vancouver)")
+ap.query(
+    "type:(PHOTOS OR VIDEOS) AND things:(plant AND beach OR moon) AND timeYear:(2023) AND timeMonth:(8) AND timeDay:(14) AND location:(CAN#BC#Vancouver)")
 
 # convenience method to get all photos
 ap.photos()
@@ -113,3 +116,11 @@ ap.delete([...])
 | searchContext   | str  | `"customer"`<br/>`"all"`<br/>`"unknown"`<br/>`"family"`<br/>`"groups"`<br/><br/>default: `"customer"`                                                                                                                                                     |
 | sort            | str  | `"['contentProperties.contentDate DESC']"`<br/>`"['contentProperties.contentDate ASC']"`<br/>`"['createdDate DESC']"`<br/>`"['createdDate ASC']"`<br/>`"['name DESC']"`<br/>`"['name ASC']"`<br/><br/>default: `"['contentProperties.contentDate DESC']"` |
 | tempLink        | str  | `"false"`<br/>`"true"`<br/><br/>default: `"false"`                                                                                                                                                                                                        |             |
+
+## Notes
+
+#### `https://www.amazon.ca/drive/v1/batchLink`
+
+- This endpoint is called when downloading a batch of photos/videos in the web interface. It then returns a URL to
+download a zip file, then makes a request to that url to download the content.
+When making a request to download data for 1200 nodes (max batch size), it turns out to be much slower (~2.5 minutes) than asynchronously downloading 1200 photos/videos individually (~1 minute).
