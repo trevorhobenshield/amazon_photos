@@ -295,7 +295,7 @@ class AmazonPhotos:
 
         fns = (partial(get, node=node) for node in node_ids)
         asyncio.run(self.process(fns, desc='Downloading media'))
-        return {'timestamp': time.time_ns(), 'nodes': node_ids}
+        return {'timestamp': time.time_ns(), 'nodes': list(node_ids)}
 
     def trashed(self, filters: str = '', offset: int = 0, limit: int = MAX_LIMIT, as_df: bool = True, out: str = 'trashed.json') -> list[dict]:
         """
