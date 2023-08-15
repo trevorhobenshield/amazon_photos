@@ -31,6 +31,7 @@ at-acbca=...
 
 Example query:
 
+#### `drive/v1/search`
 ```text
 type:(PHOTOS OR VIDEOS)
 AND things:(plant AND beach OR moon)
@@ -39,6 +40,15 @@ AND timeMonth:(7)
 AND timeDay:(1)
 AND location:(CAN#BC#Vancouver)
 AND people:(CyChdySYdfj7DHsjdSHdy)
+```
+
+#### `/drive/v1/nodes`
+```
+kind:(FILE* OR FOLDER*)
+AND contentProperties.contentType:(image* OR video*)
+AND status:(AVAILABLE*)
+AND settings.hidden:false
+AND favorite:(true)
 ```
 
 ## Examples

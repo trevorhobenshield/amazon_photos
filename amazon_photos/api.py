@@ -41,9 +41,11 @@ if platform.system() in {'Darwin', 'Linux'}:
 logging.config.dictConfig({
     'version': 1,
     'disable_existing_loggers': True,
-    'formatters': {'standard': {'format': '%(asctime)s.%(msecs)03d [%(levelname)s] :: %(message)s', 'datefmt': '%Y-%m-%d %H:%M:%S'}},
+    'formatters': {'standard': {'format': '%(asctime)s.%(msecs)03d [%(levelname)s] :: %(message)s',
+                                'datefmt': '%Y-%m-%d %H:%M:%S'}},
     'handlers': {
-        'file': {'class': 'logging.FileHandler', 'level': 'DEBUG', 'formatter': 'standard', 'filename': 'log.log', 'mode': 'a'},
+        'file': {'class': 'logging.FileHandler', 'level': 'DEBUG', 'formatter': 'standard', 'filename': 'log.log',
+                 'mode': 'a'},
     },
     'loggers': {'my_logger': {'handlers': ['file'], 'level': 'DEBUG'}}
 })
@@ -71,7 +73,7 @@ class Photos:
 
     async def process(self, fns: list, **kwargs) -> list:
         """
-        Generic method to process collections of async partials
+        Process collections of async partials
 
         @param fns: list or generator containing async partials
         @return: list of results
@@ -179,7 +181,8 @@ class Photos:
         )
         return r.json()
 
-    def query(self, filters: str, offset: int = 0, limit: int = math.inf, out: str = 'media.parquet', as_df: bool = True) -> list[dict] | pd.DataFrame:
+    def query(self, filters: str, offset: int = 0, limit: int = math.inf, out: str = 'media.parquet',
+              as_df: bool = True) -> list[dict] | pd.DataFrame:
         """
         Search all media in Amazon Photos
 
@@ -286,14 +289,16 @@ class Photos:
                                             if len((y := x.split('='))) > 1])
                 fname = content_disposition['filename'].strip('"')
                 async with aiofiles.open(out / f"{image_id}_{fname}", 'wb') as fp:
-                    await fp.write(r.content)
+                    async for chunk in r.aiter_bytes():
+                        await fp.write(chunk)
             except Exception as e:
                 logger.debug(f'Download FAILED for {image_id}\t{e}')
 
         fns = (partial(get, image_id=image_id) for image_id in image_ids)
         asyncio.run(self.process(fns, desc='downloading files'))
 
-    def trashed(self, filters: str = '', offset: int = 0, limit: int = MAX_LIMIT, as_df: bool = True, out: str = 'trashed.json') -> list[dict]:
+    def trashed(self, filters: str = '', offset: int = 0, limit: int = MAX_LIMIT, as_df: bool = True,
+                out: str = 'trashed.json') -> list[dict]:
         """
         Get trashed media. Essentially a view your trash bin in Amazon Photos.
 
@@ -336,11 +341,11 @@ class Photos:
         res.extend(asyncio.run(self.process(fns, desc='getting trashed media')))
         return dump(as_df, res, out)
 
-    def trash(self, media_ids: list[str]) -> list[dict]:
+    def trash(self, node_ids: list[str]) -> list[dict]:
         """
         Move media to trash bin
 
-        @param media_ids: list of media ids to trash
+        @param node_ids: list of media ids to trash
         @return: the trash response
         """
 
@@ -357,15 +362,15 @@ class Photos:
                 }
             )
 
-        id_batches = [media_ids[i:i + MAX_TRASH_BATCH] for i in range(0, len(media_ids), MAX_TRASH_BATCH)]
+        id_batches = [node_ids[i:i + MAX_TRASH_BATCH] for i in range(0, len(node_ids), MAX_TRASH_BATCH)]
         fns = (partial(patch, ids=ids) for ids in id_batches)
         return asyncio.run(self.process(fns, desc='trashing files'))
 
-    def restore(self, media_ids: list[str]) -> Response:
+    def restore(self, node_ids: list[str]) -> Response:
         """
         Restore media from trash bin
 
-        @param media_ids: list of media ids to restore
+        @param node_ids: list of media ids to restore
         @return: the restore response
         """
         return self.client.patch(
@@ -374,7 +379,7 @@ class Photos:
                 'recurse': 'true',
                 'op': 'remove',
                 'conflictResolution': 'RENAME',
-                'value': media_ids,
+                'value': node_ids,
                 'resourceVersion': 'V2',
                 'ContentType': 'JSON',
             }
@@ -423,10 +428,12 @@ class Photos:
             if out:
                 _out = Path(out)
                 _out.mkdir(parents=True, exist_ok=True)
-                [(_out / f'{k}.json').write_bytes(orjson.dumps(data[k], option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS)) for k in data]
+                [(_out / f'{k}.json').write_bytes(
+                    orjson.dumps(data[k], option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS)) for k in data]
             return data
 
-        categories = {'allPeople', 'clusterId', 'familyMembers', 'favorite', 'location', 'people', 'things', 'time', 'type'}
+        categories = {'allPeople', 'clusterId', 'familyMembers', 'favorite', 'location', 'people', 'things', 'time',
+                      'type'}
         if category not in categories:
             raise ValueError(f'category must be one of {categories}')
 
@@ -492,7 +499,8 @@ class Photos:
         )
         return r.json()
 
-    def __all_nodes(self, filters: str = '', offset: int = 0, limit: int = MAX_LIMIT, out: str = 'nodes.json') -> list[dict]:
+    def __all_nodes(self, filters: str = '', offset: int = 0, limit: int = MAX_LIMIT, out: str = 'nodes.json') -> list[
+        dict]:
         """
         Get first 9999 Amazon Photos nodes
 
@@ -541,3 +549,173 @@ class Photos:
         _out.parent.mkdir(parents=True, exist_ok=True)
         _out.write_bytes(orjson.dumps(res))
         return res
+
+    def favorite(self, node_ids: list[str]) -> list[dict]:
+        async def patch(client: AsyncClient, node_id: str) -> Response:
+            return await client.patch(f'https://www.amazon.ca/drive/v1/nodes/{node_id}', json={
+                'settings': {
+                    'favorite': True,
+                },
+                'resourceVersion': 'V2',
+                'ContentType': 'JSON',
+            })
+
+        fns = (partial(patch, ids=ids) for ids in node_ids)
+        return asyncio.run(self.process(fns, desc='adding media to favorites'))
+
+    def unfavorite(self, node_ids: list[str]) -> list[dict]:
+        async def patch(client: AsyncClient, node_id: str) -> Response:
+            return await client.patch(f'https://www.amazon.ca/drive/v1/nodes/{node_id}', json={
+                'settings': {
+                    'favorite': False,
+                },
+                'resourceVersion': 'V2',
+                'ContentType': 'JSON',
+            })
+
+        fns = (partial(patch, ids=ids) for ids in node_ids)
+        return asyncio.run(self.process(fns, desc='removing media from favorites'))
+
+    def create_album(self, album_name: str, node_ids: list[str]):
+        r = self.client.post('https://www.amazon.ca/drive/v1/nodes', json={
+            'kind': 'VISUAL_COLLECTION',
+            'name': album_name,
+            'resourceVersion': 'V2',
+            'ContentType': 'JSON',
+        })
+        created_album = r.json()
+        album_id = created_album['id']
+        self.client.patch(
+            f'https://www.amazon.ca/drive/v1/nodes/{album_id}/children',
+            json={
+                'op': 'add',
+                'value': node_ids,
+                'resourceVersion': 'V2',
+                'ContentType': 'JSON',
+            }
+        )
+        return created_album
+
+    def rename_album(self, album_id: str, name: str):
+        return self.client.patch(
+            f'https://www.amazon.ca/drive/v1/nodes/{album_id}',
+            json={
+                'name': name,
+                'resourceVersion': 'V2',
+                'ContentType': 'JSON',
+            }
+        ).json()
+
+    def add_to_album(self, album_id: str, node_ids: list[str]):
+        return self.client.patch(
+            f'https://www.amazon.ca/drive/v1/nodes/{album_id}/children',
+            json={
+                'op': 'add',
+                'value': node_ids,
+                'resourceVersion': 'V2',
+                'ContentType': 'JSON',
+            }
+        ).json()
+
+    def remove_from_album(self, album_id: str, node_ids: list[str]):
+        return self.client.patch(
+            f'https://www.amazon.ca/drive/v1/nodes/{album_id}/children',
+            json={
+                'op': 'remove',
+                'value': node_ids,
+                'resourceVersion': 'V2',
+                'ContentType': 'JSON',
+            }
+        ).json()
+
+    def hide(self, node_ids: list[str]) -> list[dict]:
+        async def patch(client: AsyncClient, node_id: str) -> dict:
+            r = await client.patch(
+                f'https://www.amazon.ca/drive/v1/nodes/{node_id}',
+                json={
+                    'settings': {
+                        'hidden': True,
+                    },
+                    'resourceVersion': 'V2',
+                    'ContentType': 'JSON',
+                }
+            )
+            return r.json()
+
+        fns = (partial(patch, ids=ids) for ids in node_ids)
+        return asyncio.run(self.process(fns, desc='hiding media'))
+
+    def unhide(self, node_ids: list[str]) -> list[dict]:
+        async def patch(client: AsyncClient, node_id: str) -> dict:
+            r = await client.patch(
+                f'https://www.amazon.ca/drive/v1/nodes/{node_id}',
+                json={
+                    'settings': {
+                        'hidden': False,
+                    },
+                    'resourceVersion': 'V2',
+                    'ContentType': 'JSON',
+                }
+            )
+            return r.json()
+
+        fns = (partial(patch, ids=ids) for ids in node_ids)
+        return asyncio.run(self.process(fns, desc='unhiding media'))
+
+    def rename_cluster(self, cluster_id: str, name: str):
+        """
+        Rename a cluster
+
+        E.g. rename a person cluster from a default hash to a readable name
+        """
+        r = self.client.put('https://www.amazon.ca/drive/v1/cluster/name', json={
+            'sourceCluster': cluster_id,
+            'newName': name,
+            'context': 'customer',
+            'resourceVersion': 'V2',
+            'ContentType': 'JSON',
+        })
+        return r.json()
+
+    def combine_clusters(self, cluster_ids: list[str], name: str):
+        r = self.client.post('https://www.amazon.ca/drive/v1/cluster', json={
+            'clusterIds': cluster_ids,
+            'newName': name,
+            'context': 'customer',
+            'resourceVersion': 'V2',
+            'ContentType': 'JSON',
+        })
+        return r.json()
+
+    def update_cluster_thumbnail(self, cluster_id: str, node_id: str):
+        r = self.client.put(
+            f'https://www.amazon.ca/drive/v1/cluster/hero/{cluster_id}',
+            json={
+                'clusterId': cluster_id,
+                'nodeId': node_id,
+                'resourceVersion': 'V2',
+                'ContentType': 'JSON',
+            })
+        return r.json()
+
+    def add_to_family_vault(self, family_id: str, node_ids: list[str]):
+        r = self.client.post(
+            'https://www.amazon.ca/drive/v1/familyArchive/', json={
+                'nodesToAdd': node_ids,
+                'nodesToRemove': [],
+                'familyId': family_id,
+                'resourceVersion': 'V2',
+                'ContentType': 'JSON',
+            })
+        return r.json()
+
+    def remove_from_family_vault(self, family_id: str, node_ids: list[str]):
+        r = self.client.post(
+            'https://www.amazon.ca/drive/v1/familyArchive/', json={
+                'nodesToAdd': [],
+                'nodesToRemove': node_ids,
+                'familyId': family_id,
+                'resourceVersion': 'V2',
+                'ContentType': 'JSON',
+            })
+        return r.json()
