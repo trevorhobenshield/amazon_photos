@@ -17,7 +17,7 @@ pip install amazon-photos
 
 ## Setup
 
-A `.env` file must be created with these cookie values.
+An `.env` file must be created with these cookie values.
 
 ```text
 session-id=...
