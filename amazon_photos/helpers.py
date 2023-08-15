@@ -14,7 +14,7 @@ def dump(cond: bool, res: list[dict], out: str):
     return res
 
 
-def parse_media(media: any, out: str = 'media.parquet') -> pd.DataFrame:
+def parse_media(media: any, out: str) -> pd.DataFrame:
     df = pd.json_normalize(y for x in media for y in x['data']).rename(
         {'contentProperties.version': 'contentPropertiesVersion'}, axis=1
     )
