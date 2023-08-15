@@ -25,11 +25,9 @@ setup(
     license=about['__license__'],
     long_description=dedent('''
     # Amazon Photos API
-    
+
     ## Table of Contents
     
-    - [Amazon Photos API](#amazon-photos-api)
-    - [Table of Contents](#table-of-contents)
     - [Installation](#installation)
     - [Setup](#setup)
     - [Query Syntax](#query-syntax)
@@ -43,7 +41,7 @@ setup(
     
     ## Setup
     
-    A `.env` file must be created with these cookie values.
+    An `.env` file must be created with these cookie values.
     
     ```text
     session-id=...
@@ -57,6 +55,8 @@ setup(
     
     Example query:
     
+    #### `drive/v1/search`
+    
     ```text
     type:(PHOTOS OR VIDEOS)
     AND things:(plant AND beach OR moon)
@@ -67,18 +67,48 @@ setup(
     AND people:(CyChdySYdfj7DHsjdSHdy)
     ```
     
+    #### `/drive/v1/nodes`
+    
+    ```
+    kind:(FILE* OR FOLDER*)
+    AND contentProperties.contentType:(image* OR video*)
+    AND status:(AVAILABLE*)
+    AND settings.hidden:false
+    AND favorite:(true)
+    ```
+    
     ## Examples
     
     ```python
+    from pathlib import Path
     from amazon_photos import Photos
     
     ap = Photos()
     
-    # get entire Amazon Photos library
-    ap.query("type:(PHOTOS OR VIDEOS)")
+    # get entire Amazon Photos library. (default save to `ap.parquet`)
+    media = ap.query("type:(PHOTOS OR VIDEOS)")
     
-    # query Amazon Photos library for specific photos/videos
-    ap.query("type:(PHOTOS OR VIDEOS) AND things:(plant AND beach OR moon) AND timeYear:(2023) AND timeMonth:(8) AND timeDay:(14) AND location:(CAN#BC#Vancouver)")
+    # query Amazon Photos library with more filters applied. (default save to `ap.parquet`)
+    media = ap.query("type:(PHOTOS OR VIDEOS) AND things:(plant AND beach OR moon) AND timeYear:(2023) AND timeMonth:(8) AND timeDay:(14) AND location:(CAN#BC#Vancouver)")
+    
+    # sample first 10 nodes
+    node_ids = media.id[:10]
+    
+    # move a batch of images/videos to the trash bin
+    ap.trash(node_ids)
+    
+    # restore a batch of images/videos from the trash bin
+    ap.restore(node_ids)
+    
+    # upload a batch of images/videos
+    files = Path('path/to/files').iterdir()
+    ap.upload(files)
+    
+    # download a batch of images/videos
+    ap.download(node_ids)
+    
+    # permanently delete a batch of images/videos.
+    ap.delete(node_ids)
     
     # convenience method to get all photos
     ap.photos()
@@ -97,21 +127,6 @@ setup(
     
     # get trash bin contents
     ap.trashed()
-    
-    # move a batch of images/videos to the trash bin
-    ap.trash([...])
-    
-    # restore a batch of images/videos from the trash bin
-    ap.restore([...])
-    
-    # upload a batch of images/videos
-    ap.upload([...])
-    
-    # download a batch of images/videos
-    ap.download([...])
-    
-    # permanently delete a batch of images/videos.
-    ap.delete([...])
     ```
     
     ## Common Paramters
@@ -129,6 +144,14 @@ setup(
     | searchContext   | str  | `"customer"`<br/>`"all"`<br/>`"unknown"`<br/>`"family"`<br/>`"groups"`<br/><br/>default: `"customer"`                                                                                                                                                     |
     | sort            | str  | `"['contentProperties.contentDate DESC']"`<br/>`"['contentProperties.contentDate ASC']"`<br/>`"['createdDate DESC']"`<br/>`"['createdDate ASC']"`<br/>`"['name DESC']"`<br/>`"['name ASC']"`<br/><br/>default: `"['contentProperties.contentDate DESC']"` |
     | tempLink        | str  | `"false"`<br/>`"true"`<br/><br/>default: `"false"`                                                                                                                                                                                                        |             |
+    
+    ## Notes
+    
+    #### `https://www.amazon.ca/drive/v1/batchLink`
+    
+    - This endpoint is called when downloading a batch of photos/videos in the web interface. It then returns a URL to
+    download a zip file, then makes a request to that url to download the content.
+    When making a request to download data for 1200 nodes (max batch size), it turns out to be much slower (~2.5 minutes) than asynchronously downloading 1200 photos/videos individually (~1 minute).
 
     '''),
     python_requires=">=3.10.10",
