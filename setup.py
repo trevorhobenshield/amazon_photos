@@ -81,18 +81,18 @@ setup(
     
     ```python
     from pathlib import Path
-    from amazon_photos import Photos
+    from amazon_photos import AmazonPhotos
     
-    ap = Photos()
+    ap = AmazonPhotos()
     
     # get entire Amazon Photos library. (default save to `ap.parquet`)
-    media = ap.query("type:(PHOTOS OR VIDEOS)")
+    nodes = ap.query("type:(PHOTOS OR VIDEOS)")
     
     # query Amazon Photos library with more filters applied. (default save to `ap.parquet`)
-    media = ap.query("type:(PHOTOS OR VIDEOS) AND things:(plant AND beach OR moon) AND timeYear:(2023) AND timeMonth:(8) AND timeDay:(14) AND location:(CAN#BC#Vancouver)")
+    nodes = ap.query("type:(PHOTOS OR VIDEOS) AND things:(plant AND beach OR moon) AND timeYear:(2023) AND timeMonth:(8) AND timeDay:(14) AND location:(CAN#BC#Vancouver)")
     
     # sample first 10 nodes
-    node_ids = media.id[:10]
+    node_ids = nodes.id[:10]
     
     # move a batch of images/videos to the trash bin
     ap.trash(node_ids)

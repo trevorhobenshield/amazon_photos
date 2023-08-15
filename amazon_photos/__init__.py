@@ -1,1 +1,1 @@
-from .api import Photos
+from .api import AmazonPhotos

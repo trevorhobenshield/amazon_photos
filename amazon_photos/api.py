@@ -54,7 +54,7 @@ logger_name = list(Logger.manager.loggerDict)[-1]
 logger = getLogger(logger_name)
 
 
-class Photos:
+class AmazonPhotos:
     def __init__(self):
         self.client = Client(
             http2=True,
