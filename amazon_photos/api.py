@@ -182,7 +182,7 @@ class Photos:
         )
         return r.json()
 
-    def query(self, filters: str, offset: int = 0, limit: int = math.inf, out: str = 'media.parquet', as_df: bool = True) -> list[dict] | pd.DataFrame:
+    def query(self, filters: str, offset: int = 0, limit: int = math.inf, out: str = 'ap.parquet', as_df: bool = True) -> list[dict] | pd.DataFrame:
         """
         Search all media in Amazon Photos
 
@@ -226,7 +226,7 @@ class Photos:
         """Convenience method to get all videos"""
         return self.query('type:(VIDEOS)', **kwargs)
 
-    def upload(self, files: list[Path | str], chunk_size=64 * 1024) -> list[dict]:
+    def upload(self, files: list[Path | str] | Generator, chunk_size=64 * 1024) -> list[dict]:
         """
         Upload files to Amazon Photos
 

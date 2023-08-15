@@ -2,8 +2,6 @@
 
 ## Table of Contents
 
-- [Amazon Photos API](#amazon-photos-api)
-- [Table of Contents](#table-of-contents)
 - [Installation](#installation)
 - [Setup](#setup)
 - [Query Syntax](#query-syntax)
@@ -56,16 +54,35 @@ AND favorite:(true)
 ## Examples
 
 ```python
+from pathlib import Path
 from amazon_photos import Photos
 
 ap = Photos()
 
-# get entire Amazon Photos library
-ap.query("type:(PHOTOS OR VIDEOS)")
+# get entire Amazon Photos library. (default save to `ap.parquet`)
+media = ap.query("type:(PHOTOS OR VIDEOS)")
 
-# query Amazon Photos library for specific photos/videos
-ap.query(
-    "type:(PHOTOS OR VIDEOS) AND things:(plant AND beach OR moon) AND timeYear:(2023) AND timeMonth:(8) AND timeDay:(14) AND location:(CAN#BC#Vancouver)")
+# query Amazon Photos library with more filters applied. (default save to `ap.parquet`)
+media = ap.query("type:(PHOTOS OR VIDEOS) AND things:(plant AND beach OR moon) AND timeYear:(2023) AND timeMonth:(8) AND timeDay:(14) AND location:(CAN#BC#Vancouver)")
+
+# sample first 10 nodes
+node_ids = media.id[:10]
+
+# move a batch of images/videos to the trash bin
+ap.trash(node_ids)
+
+# restore a batch of images/videos from the trash bin
+ap.restore(node_ids)
+
+# upload a batch of images/videos
+files = Path('path/to/files').iterdir()
+ap.upload(files)
+
+# download a batch of images/videos
+ap.download(node_ids)
+
+# permanently delete a batch of images/videos.
+ap.delete(node_ids)
 
 # convenience method to get all photos
 ap.photos()
@@ -84,21 +101,6 @@ ap.aggregations(category="location")
 
 # get trash bin contents
 ap.trashed()
-
-# move a batch of images/videos to the trash bin
-ap.trash([...])
-
-# restore a batch of images/videos from the trash bin
-ap.restore([...])
-
-# upload a batch of images/videos
-ap.upload([...])
-
-# download a batch of images/videos
-ap.download([...])
-
-# permanently delete a batch of images/videos.
-ap.delete([...])
 ```
 
 ## Common Paramters
