@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Generator
 
 import aiofiles
-import dotenv
 import orjson
 import pandas as pd
 from httpx import AsyncClient, Client, Response
@@ -20,8 +19,6 @@ from tqdm.asyncio import tqdm_asyncio
 
 from .constants import *
 from .helpers import dump
-
-dotenv.load_dotenv()
 
 try:
     if get_ipython().__class__.__name__ == 'ZMQInteractiveShell':
@@ -62,12 +59,12 @@ class AmazonPhotos:
             timeout=60,
             headers={
                 'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
-                'x-amzn-sessionid': os.getenv('session-id'),
+                'x-amzn-sessionid': os.getenv('SESSION_ID'),
             },
             cookies={
-                'session-id': os.getenv('session-id'),
-                'ubid-acbca': os.getenv('ubid-acbca'),
-                'at-acbca': os.getenv('at-acbca'),  # access_token
+                'session-id': os.getenv('SESSION_ID'),
+                'ubid-acbca': os.getenv('UBID_ACDCA'),
+                'at-acbca': os.getenv('AT_ACBCA'),
             }
         )
         self.root, self.owner_id = self._get_root()

@@ -15,12 +15,13 @@ pip install amazon-photos
 
 ## Setup
 
-An `.env` file must be created with these cookie values.
+These environment variables must be set. They correspond to **cookies** found in the browser when logged into Amazon
+Photos.
 
-```text
-session-id=...
-ubid-acbca=...
-at-acbca=...
+```bash
+export SESSION_ID="..."
+export UBID_ACDCA="..."
+export AT_ACBCA="..."
 ```
 
 ## Query Syntax
@@ -124,5 +125,6 @@ ap.trashed()
 #### `https://www.amazon.ca/drive/v1/batchLink`
 
 - This endpoint is called when downloading a batch of photos/videos in the web interface. It then returns a URL to
-download a zip file, then makes a request to that url to download the content.
-When making a request to download data for 1200 nodes (max batch size), it turns out to be much slower (~2.5 minutes) than asynchronously downloading 1200 photos/videos individually (~1 minute).
+  download a zip file, then makes a request to that url to download the content.
+  When making a request to download data for 1200 nodes (max batch size), it turns out to be much slower (~2.5 minutes)
+  than asynchronously downloading 1200 photos/videos individually (~1 minute).
