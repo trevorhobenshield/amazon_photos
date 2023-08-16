@@ -12,16 +12,16 @@ from pathlib import Path
 from typing import Generator
 
 import aiofiles
+import dotenv
 import orjson
 import pandas as pd
-from dotenv import load_dotenv
 from httpx import AsyncClient, Client, Response
 from tqdm.asyncio import tqdm_asyncio
 
-from .helpers import dump
 from .constants import *
+from .helpers import dump
 
-load_dotenv()
+dotenv.load_dotenv()
 
 try:
     if get_ipython().__class__.__name__ == 'ZMQInteractiveShell':
