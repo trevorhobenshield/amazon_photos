@@ -263,7 +263,7 @@ class AmazonPhotos:
         fns = (partial(upload_file, file=file) for file in files)
         return asyncio.run(self.process(fns, desc='Uploading files'))
 
-    def download(self, node_ids: list[str], out: str = 'media') -> dict:
+    def download(self, node_ids: list[str], out: str = 'media', chunk_size: int = None) -> dict:
         """
         Download files from Amazon Photos
 
@@ -281,12 +281,12 @@ class AmazonPhotos:
             logger.debug(f'Downloading {node}')
             try:
                 url = f'https://www.amazon.ca/drive/v1/nodes/{node}/contentRedirection'
-                r = await self.async_backoff(client.get, url, params=params)
-                content_disposition = dict([y for x in r.headers['content-disposition'].split('; ') if len((y := x.split('='))) > 1])
-                fname = content_disposition['filename'].strip('"')
-                async with aiofiles.open(out / f"{node}_{fname}", 'wb') as fp:
-                    async for chunk in r.aiter_bytes():
-                        await fp.write(chunk)
+                async with client.stream('GET', url, params=params) as r:
+                    content_disposition = dict([y for x in r.headers['content-disposition'].split('; ') if len((y := x.split('='))) > 1])
+                    fname = content_disposition['filename'].strip('"')
+                    async with aiofiles.open(out / f"{node}_{fname}", 'wb') as fp:
+                        async for chunk in r.aiter_bytes(chunk_size):
+                            await fp.write(chunk)
             except Exception as e:
                 logger.debug(f'Download FAILED for {node}\t{e}')
 
