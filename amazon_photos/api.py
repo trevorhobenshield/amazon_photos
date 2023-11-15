@@ -14,7 +14,7 @@ from typing import Generator
 import aiofiles
 import orjson
 import pandas as pd
-from httpx import AsyncClient, Client, Response
+from httpx import AsyncClient, Client, Response, Limits
 from tqdm.asyncio import tqdm_asyncio
 
 from .constants import *
@@ -81,13 +81,14 @@ class AmazonPhotos:
             timeout=60,
             follow_redirects=True,
             headers=self.client.headers,
-            cookies=self.client.cookies
+            cookies=self.client.cookies,
+            limits=Limits(max_connections=1000),
         )
         async with client as c:
             return await tqdm_asyncio.gather(*(fn(client=c) for fn in fns), desc=kwargs.get('desc'))
 
     @staticmethod
-    async def async_backoff(fn, *args, m: int = 20, b: int = 2, max_retries: int = 8, **kwargs) -> any:
+    async def async_backoff(fn, *args, m: int = 20, b: int = 2, max_retries: int = 12, **kwargs) -> any:
         """Async exponential backoff"""
         for i in range(max_retries + 1):
             try:
@@ -106,7 +107,7 @@ class AmazonPhotos:
                 await asyncio.sleep(t)
 
     @staticmethod
-    def backoff(fn, *args, m: int = 20, b: int = 2, max_retries: int = 8, **kwargs) -> any:
+    def backoff(fn, *args, m: int = 20, b: int = 2, max_retries: int = 12, **kwargs) -> any:
         """Exponential backoff"""
         for i in range(max_retries + 1):
             try:
@@ -179,7 +180,7 @@ class AmazonPhotos:
         )
         return r.json()
 
-    def query(self, filters: str, offset: int = 0, limit: int = math.inf, out: str = 'ap.parquet', as_df: bool = True) -> list[dict] | pd.DataFrame:
+    def query(self, filters: str = "type:(PHOTOS OR VIDEOS)", offset: int = 0, limit: int = math.inf, out: str = 'ap.parquet', as_df: bool = True) -> list[dict] | pd.DataFrame:
         """
         Search all media in Amazon Photos
 
@@ -224,14 +225,6 @@ class AmazonPhotos:
         return self.query('type:(VIDEOS)', **kwargs)
 
     def upload(self, files: list[Path | str] | Generator, chunk_size=64 * 1024) -> list[dict]:
-        """
-        Upload files to Amazon Photos
-
-        @param files: list of files to upload
-        @param chunk_size: optional size to chunk files into during stream upload
-        @return: the upload response
-        """
-
         async def stream_bytes(file: Path) -> bytes:
             async with aiofiles.open(file, 'rb') as f:
                 while chunk := await f.read(chunk_size):
@@ -240,7 +233,7 @@ class AmazonPhotos:
         async def upload_file(client: AsyncClient, file: Path):
             logger.debug(f'Upload start: {file.name}')
             file = Path(file) if isinstance(file, str) else file
-            file_content = file.read_bytes()
+            file_content = file.read_bytes()  # todo: not ideal, will refactor eventually
             r = await client.post(
                 'https://content-na.drive.amazonaws.com/v2/upload',
                 data=stream_bytes(file),
@@ -251,6 +244,7 @@ class AmazonPhotos:
                     'parentNodeId': self.root,
                 },
                 headers={
+                    # 'x-amz-access-token':self.client.cookies['at-acbca'],
                     'content-length': str(len(file_content)),
                     'x-amzn-file-md5': hashlib.md5(file_content).hexdigest(),
                 }
@@ -261,7 +255,7 @@ class AmazonPhotos:
             return data
 
         fns = (partial(upload_file, file=file) for file in files)
-        return asyncio.run(self.process(fns, desc='Uploading files'))
+        return asyncio.run(self.process(fns, desc='Uploading Files'))
 
     def download(self, node_ids: list[str], out: str = 'media', chunk_size: int = None) -> dict:
         """
@@ -309,15 +303,12 @@ class AmazonPhotos:
         """
         initial = self.backoff(
             self.client.get,
-            'https://www.amazon.ca/drive/v1/nodes',
+            'https://www.amazon.ca/drive/v1/trash',
             params={
-                'asset': 'ALL',
-                'tempLink': 'false',
-                'limit': MAX_LIMIT,
                 'sort': "['modifiedDate DESC']",
-                'filters': filters or 'kind:(FILE* OR FOLDER*) AND contentProperties.contentType:(image* OR video*) AND status:(TRASH*)',
-                'lowResThumbnail': 'true',
+                'limit': MAX_LIMIT,
                 'offset': offset,
+                'filters': filters or 'kind:(FILE* OR FOLDER*) AND contentProperties.contentType:(image* OR video*) AND status:(TRASH*)',
                 'resourceVersion': 'V2',
                 'ContentType': 'JSON',
                 '_': int(time.time_ns() // 1e6)
@@ -381,23 +372,28 @@ class AmazonPhotos:
             }
         )
 
-    def delete(self, ids: list[str]) -> Response:
+    def delete(self, node_ids: list[str]) -> list[dict]:
         """
         Permanently delete media from Amazon Photos
 
-        @param ids: list of media ids to delete
+        @param node_ids: list of media ids to delete
         @return: the delete response
         """
-        return self.backoff(
-            self.client.post,
-            'https://www.amazon.ca/drive/v1/bulk/nodes/purge',
-            json={
-                'recurse': 'false',
-                'nodeIds': ids,
-                'resourceVersion': 'V2',
-                'ContentType': 'JSON',
-            }
-        )
+
+        async def post(client: AsyncClient, ids: list[str]) -> Response:
+            return await client.post(
+                'https://www.amazon.ca/drive/v1/bulk/nodes/purge',
+                json={
+                    'recurse': 'false',
+                    'nodeIds': ids,
+                    'resourceVersion': 'V2',
+                    'ContentType': 'JSON',
+                }
+            )
+
+        id_batches = [node_ids[i:i + MAX_PURGE_BATCH] for i in range(0, len(node_ids), MAX_PURGE_BATCH)]
+        fns = (partial(post, ids=ids) for ids in id_batches)
+        return asyncio.run(self.process(fns, desc='trashing files'))
 
     def aggregations(self, category: str, out: str = 'aggregations') -> dict:
         """
@@ -461,7 +457,7 @@ class AmazonPhotos:
         r = self.backoff(
             self.client.get,
             'https://cdws.us-east-1.amazonaws.com/drive/v2/memories/v1/collections/this_day_filtered',
-            params={'day': 1, 'month': 1, 'includeContents': 'true', 'contentsSize': 1},
+            params={'day': 13, 'month': 11, 'includeContents': 'true', 'contentsSize': 1, '_': int(time.time_ns() // 1e6)},
         )
         data = r.json()
         node = data['collections'][0]['nodes'][0]
@@ -498,7 +494,7 @@ class AmazonPhotos:
     def favorite(self, node_ids: list[str]) -> list[dict]:
         """
         Add media to favorites
-        
+
         @param node_ids: media node ids to add to favorites
         @return: operation response
         """
@@ -519,8 +515,8 @@ class AmazonPhotos:
     def unfavorite(self, node_ids: list[str]) -> list[dict]:
         """
         Remove media from favorites
-        
-        @param node_ids: media node ids to remove from favorites 
+
+        @param node_ids: media node ids to remove from favorites
         @return: operation response
         """
 
@@ -540,7 +536,7 @@ class AmazonPhotos:
     def create_album(self, album_name: str, node_ids: list[str]):
         """
         Create album
-        
+
         @param album_name: name of album to create
         @param node_ids: media node ids to add to album
         @return: operation response
