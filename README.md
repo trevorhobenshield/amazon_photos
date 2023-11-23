@@ -15,13 +15,18 @@ pip install amazon-photos
 
 ## Setup
 
-These environment variables must be set. They correspond to **cookies** found in the browser when logged into Amazon
-Photos.
+These environment variables must be set. Log in to Amazon Photos and copy the cookies:
+- *`ubid-acdxx`
+- *`at-acbxx`
+- `session-id`
 
+*replace `xx` with your country code
+
+E.g. for amazon.ca, you would add to your `~/.bashrc`:
 ```bash
-export SESSION_ID="..."
-export UBID_ACDCA="..."
-export AT_ACBCA="..."
+export session_id="..."
+export ubid_acdca="..."
+export at_acbca="..."
 ```
 
 ## Query Syntax
@@ -58,7 +63,8 @@ AND favorite:(true)
 from pathlib import Path
 from amazon_photos import AmazonPhotos
 
-ap = AmazonPhotos()
+# e.g. using amazon.ca
+ap = AmazonPhotos(tld="ca")
 
 # get entire Amazon Photos library. (default save to `ap.parquet`)
 nodes = ap.query("type:(PHOTOS OR VIDEOS)")

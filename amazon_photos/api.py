@@ -3,7 +3,6 @@ import hashlib
 import logging.config
 import math
 import os
-import platform
 import random
 import time
 from functools import partial
@@ -21,20 +20,18 @@ from .constants import *
 from .helpers import dump
 
 try:
-    if get_ipython().__class__.__name__ == 'ZMQInteractiveShell':
-        import nest_asyncio
+    import nest_asyncio
 
-        nest_asyncio.apply()
+    nest_asyncio.apply()
 except:
     ...
 
-if platform.system() in {'Darwin', 'Linux'}:
-    try:
-        import uvloop
+try:
+    import uvloop
 
-        uvloop.install()
-    except ImportError as e:
-        ...
+    uvloop.install()
+except:
+    ...
 
 logging.config.dictConfig({
     'version': 1,
@@ -52,19 +49,21 @@ logger = getLogger(logger_name)
 
 
 class AmazonPhotos:
-    def __init__(self):
+    def __init__(self, tld: str):
+        self.tld = tld  # top-level domain
+        self.base = f'https://www.amazon.{self.tld}'
         self.client = Client(
             http2=True,
             follow_redirects=True,
             timeout=60,
             headers={
-                'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
-                'x-amzn-sessionid': os.getenv('SESSION_ID'),
+                'user-agent': random.choice(USER_AGENTS),
+                'x-amzn-sessionid': os.getenv('session_id'),
             },
             cookies={
-                'session-id': os.getenv('SESSION_ID'),
-                'ubid-acbca': os.getenv('UBID_ACDCA'),
-                'at-acbca': os.getenv('AT_ACBCA'),
+                f'ubid-acb{tld}': os.getenv(f'ubid_acb{tld}'),
+                f'at-acb{tld}': os.getenv(f'at_acb{tld}'),
+                'session-id': os.getenv('session_id'),
             }
         )
         self.root, self.owner_id = self._get_root()
@@ -134,7 +133,7 @@ class AmazonPhotos:
         """
         r = self.backoff(
             self.client.get,
-            "https://www.amazon.ca/drive/v1/account/usage",
+            f'{self.base}/drive/v1/account/usage',
             params={"resourceVersion": "V2", "ContentType": "JSON", "_": int(time.time_ns() // 1e6)},
         )
         data = r.json()
@@ -164,7 +163,7 @@ class AmazonPhotos:
         """
         r = await self.async_backoff(
             client.get,
-            "https://www.amazon.ca/drive/v1/search",
+            f'{self.base}/drive/v1/search',
             params={
                 "limit": limit,
                 "offset": offset,
@@ -180,7 +179,8 @@ class AmazonPhotos:
         )
         return r.json()
 
-    def query(self, filters: str = "type:(PHOTOS OR VIDEOS)", offset: int = 0, limit: int = math.inf, out: str = 'ap.parquet', as_df: bool = True) -> list[dict] | pd.DataFrame:
+    def query(self, filters: str = "type:(PHOTOS OR VIDEOS)", offset: int = 0, limit: int = math.inf,
+              out: str = 'ap.parquet', as_df: bool = True) -> list[dict] | pd.DataFrame:
         """
         Search all media in Amazon Photos
 
@@ -193,7 +193,7 @@ class AmazonPhotos:
         """
         initial = self.backoff(
             self.client.get,
-            "https://www.amazon.ca/drive/v1/search",
+            f'{self.base}/drive/v1/search',
             params={
                 "limit": MAX_LIMIT,
                 "offset": offset,
@@ -274,9 +274,10 @@ class AmazonPhotos:
         async def get(client: AsyncClient, node: str) -> None:
             logger.debug(f'Downloading {node}')
             try:
-                url = f'https://www.amazon.ca/drive/v1/nodes/{node}/contentRedirection'
+                url = f'{self.base}/drive/v1/nodes/{node}/contentRedirection'
                 async with client.stream('GET', url, params=params) as r:
-                    content_disposition = dict([y for x in r.headers['content-disposition'].split('; ') if len((y := x.split('='))) > 1])
+                    content_disposition = dict(
+                        [y for x in r.headers['content-disposition'].split('; ') if len((y := x.split('='))) > 1])
                     fname = content_disposition['filename'].strip('"')
                     async with aiofiles.open(out / f"{node}_{fname}", 'wb') as fp:
                         async for chunk in r.aiter_bytes(chunk_size):
@@ -288,7 +289,8 @@ class AmazonPhotos:
         asyncio.run(self.process(fns, desc='Downloading media'))
         return {'timestamp': time.time_ns(), 'nodes': list(node_ids)}
 
-    def trashed(self, filters: str = '', offset: int = 0, limit: int = MAX_LIMIT, as_df: bool = True, out: str = 'trashed.json') -> list[dict]:
+    def trashed(self, filters: str = '', offset: int = 0, limit: int = MAX_LIMIT, as_df: bool = True,
+                out: str = 'trashed.json') -> list[dict]:
         """
         Get trashed media. Essentially a view your trash bin in Amazon Photos.
 
@@ -303,7 +305,7 @@ class AmazonPhotos:
         """
         initial = self.backoff(
             self.client.get,
-            'https://www.amazon.ca/drive/v1/trash',
+            f'{self.base}/drive/v1/trash',
             params={
                 'sort': "['modifiedDate DESC']",
                 'limit': MAX_LIMIT,
@@ -338,7 +340,7 @@ class AmazonPhotos:
 
         async def patch(client: AsyncClient, ids: list[str]) -> Response:
             return await client.patch(
-                'https://www.amazon.ca/drive/v1/trash',
+                f'{self.base}/drive/v1/trash',
                 json={
                     'recurse': 'true',
                     'op': 'add',
@@ -361,7 +363,7 @@ class AmazonPhotos:
         @return: the restore response
         """
         return self.client.patch(
-            'https://www.amazon.ca/drive/v1/trash',
+            f'{self.base}/drive/v1/trash',
             json={
                 'recurse': 'true',
                 'op': 'remove',
@@ -382,7 +384,7 @@ class AmazonPhotos:
 
         async def post(client: AsyncClient, ids: list[str]) -> Response:
             return await client.post(
-                'https://www.amazon.ca/drive/v1/bulk/nodes/purge',
+                f'{self.base}/drive/v1/bulk/nodes/purge',
                 json={
                     'recurse': 'false',
                     'nodeIds': ids,
@@ -406,7 +408,7 @@ class AmazonPhotos:
         if category == 'all':
             r = self.backoff(
                 self.client.get,
-                'https://www.amazon.ca/drive/v1/search',
+                f'{self.base}/drive/v1/search',
                 params={
                     'asset': 'ALL',
                     'limit': 1,  # don't care about media info, just want aggregations
@@ -431,7 +433,7 @@ class AmazonPhotos:
 
         r = self.backoff(
             self.client.get,
-            'https://www.amazon.ca/drive/v1/search/aggregation',
+            f'{self.base}/drive/v1/search/aggregation',
             params={
                 'aggregationContext': 'all',
                 'category': category,
@@ -457,7 +459,8 @@ class AmazonPhotos:
         r = self.backoff(
             self.client.get,
             'https://cdws.us-east-1.amazonaws.com/drive/v2/memories/v1/collections/this_day_filtered',
-            params={'day': 13, 'month': 11, 'includeContents': 'true', 'contentsSize': 1, '_': int(time.time_ns() // 1e6)},
+            params={'day': 13, 'month': 11, 'includeContents': 'true', 'contentsSize': 1,
+                    '_': int(time.time_ns() // 1e6)},
         )
         data = r.json()
         node = data['collections'][0]['nodes'][0]
@@ -475,7 +478,7 @@ class AmazonPhotos:
         """
         r = await self.async_backoff(
             client.get,
-            'https://www.amazon.ca/drive/v1/nodes',
+            f'{self.base}/drive/v1/nodes',
             params={
                 'asset': 'ALL',
                 'tempLink': 'false',
@@ -500,7 +503,7 @@ class AmazonPhotos:
         """
 
         async def patch(client: AsyncClient, node_id: str) -> dict:
-            r = await client.patch(f'https://www.amazon.ca/drive/v1/nodes/{node_id}', json={
+            r = await client.patch(f'{self.base}/drive/v1/nodes/{node_id}', json={
                 'settings': {
                     'favorite': True,
                 },
@@ -521,7 +524,7 @@ class AmazonPhotos:
         """
 
         async def patch(client: AsyncClient, node_id: str) -> dict:
-            r = await client.patch(f'https://www.amazon.ca/drive/v1/nodes/{node_id}', json={
+            r = await client.patch(f'{self.base}/drive/v1/nodes/{node_id}', json={
                 'settings': {
                     'favorite': False,
                 },
@@ -541,7 +544,7 @@ class AmazonPhotos:
         @param node_ids: media node ids to add to album
         @return: operation response
         """
-        r = self.client.post('https://www.amazon.ca/drive/v1/nodes', json={
+        r = self.client.post(f'{self.base}/drive/v1/nodes', json={
             'kind': 'VISUAL_COLLECTION',
             'name': album_name,
             'resourceVersion': 'V2',
@@ -550,7 +553,7 @@ class AmazonPhotos:
         created_album = r.json()
         album_id = created_album['id']
         self.client.patch(
-            f'https://www.amazon.ca/drive/v1/nodes/{album_id}/children',
+            f'{self.base}/drive/v1/nodes/{album_id}/children',
             json={
                 'op': 'add',
                 'value': node_ids,
@@ -569,7 +572,7 @@ class AmazonPhotos:
         @return: operation response
         """
         return self.client.patch(
-            f'https://www.amazon.ca/drive/v1/nodes/{album_id}',
+            f'{self.base}/drive/v1/nodes/{album_id}',
             json={
                 'name': name,
                 'resourceVersion': 'V2',
@@ -586,7 +589,7 @@ class AmazonPhotos:
         @return: operation response
         """
         return self.client.patch(
-            f'https://www.amazon.ca/drive/v1/nodes/{album_id}/children',
+            f'{self.base}/drive/v1/nodes/{album_id}/children',
             json={
                 'op': 'add',
                 'value': node_ids,
@@ -604,7 +607,7 @@ class AmazonPhotos:
         @return: operation response
         """
         return self.client.patch(
-            f'https://www.amazon.ca/drive/v1/nodes/{album_id}/children',
+            f'{self.base}/drive/v1/nodes/{album_id}/children',
             json={
                 'op': 'remove',
                 'value': node_ids,
@@ -623,7 +626,7 @@ class AmazonPhotos:
 
         async def patch(client: AsyncClient, node_id: str) -> dict:
             r = await client.patch(
-                f'https://www.amazon.ca/drive/v1/nodes/{node_id}',
+                f'{self.base}/drive/v1/nodes/{node_id}',
                 json={
                     'settings': {
                         'hidden': True,
@@ -647,7 +650,7 @@ class AmazonPhotos:
 
         async def patch(client: AsyncClient, node_id: str) -> dict:
             r = await client.patch(
-                f'https://www.amazon.ca/drive/v1/nodes/{node_id}',
+                f'{self.base}/drive/v1/nodes/{node_id}',
                 json={
                     'settings': {
                         'hidden': False,
@@ -671,7 +674,7 @@ class AmazonPhotos:
         @param name: new name
         @return: operation response
         """
-        return self.client.put('https://www.amazon.ca/drive/v1/cluster/name', json={
+        return self.client.put(f'{self.base}/drive/v1/cluster/name', json={
             'sourceCluster': cluster_id,
             'newName': name,
             'context': 'customer',
@@ -689,7 +692,7 @@ class AmazonPhotos:
         @param name: name of new combined cluster
         @return: operation response
         """
-        return self.client.post('https://www.amazon.ca/drive/v1/cluster', json={
+        return self.client.post(f'{self.base}/drive/v1/cluster', json={
             'clusterIds': cluster_ids,
             'newName': name,
             'context': 'customer',
@@ -706,7 +709,7 @@ class AmazonPhotos:
         @return: operation response
         """
         return self.client.put(
-            f'https://www.amazon.ca/drive/v1/cluster/hero/{cluster_id}',
+            f'{self.base}/drive/v1/cluster/hero/{cluster_id}',
             json={
                 'clusterId': cluster_id,
                 'nodeId': node_id,
@@ -723,7 +726,7 @@ class AmazonPhotos:
         @return: operation response
         """
         return self.client.post(
-            'https://www.amazon.ca/drive/v1/familyArchive/', json={
+            f'{self.base}/drive/v1/familyArchive/', json={
                 'nodesToAdd': node_ids,
                 'nodesToRemove': [],
                 'familyId': family_id,
@@ -740,7 +743,7 @@ class AmazonPhotos:
         @return: operation response
         """
         return self.client.post(
-            'https://www.amazon.ca/drive/v1/familyArchive/', json={
+            f'{self.base}/drive/v1/familyArchive/', json={
                 'nodesToAdd': [],
                 'nodesToRemove': node_ids,
                 'familyId': family_id,
@@ -748,7 +751,8 @@ class AmazonPhotos:
                 'ContentType': 'JSON',
             }).json()
 
-    def __nodes_head(self, filters: str = '', offset: int = 0, limit: int = MAX_LIMIT, out: str = 'nodes.json') -> list[dict]:
+    def __nodes_head(self, filters: str = '', offset: int = 0, limit: int = MAX_LIMIT, out: str = 'nodes.json') -> list[
+        dict]:
         """
         Get first 9999 Amazon Photos nodes
 
@@ -762,7 +766,7 @@ class AmazonPhotos:
         """
         initial = self.backoff(
             self.client.get,
-            'https://www.amazon.ca/drive/v1/nodes',
+            f'{self.base}/drive/v1/nodes',
             params={
                 'limit': MAX_LIMIT,
                 'offset': offset,
