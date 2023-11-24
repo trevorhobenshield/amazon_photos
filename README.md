@@ -25,7 +25,7 @@ These environment variables must be set. Log in to Amazon Photos and copy the co
 E.g. for amazon.ca, you would add to your `~/.bashrc`:
 ```bash
 export session_id="..."
-export ubid_acdca="..."
+export ubid_acbca="..."
 export at_acbca="..."
 ```
 
