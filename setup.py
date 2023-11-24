@@ -41,7 +41,7 @@ pip install amazon-photos
 ## Setup
 
 These environment variables must be set. Log in to Amazon Photos and copy the cookies:
-- *`ubid-acdxx`
+- *`ubid-acbxx`
 - *`at-acbxx`
 - `session-id`
 
