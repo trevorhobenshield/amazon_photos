@@ -23,7 +23,6 @@ from .helpers import dump
 try:
     get_ipython()
     import nest_asyncio
-
     nest_asyncio.apply()
 except:
     ...
@@ -31,7 +30,6 @@ except:
 if platform.system() != 'Windows':
     try:
         import uvloop
-
         uvloop.install()
     except:
         ...
