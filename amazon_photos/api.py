@@ -21,6 +21,7 @@ from .constants import *
 from .helpers import dump
 
 try:
+    get_ipython()
     import nest_asyncio
     nest_asyncio.apply()
 except:
