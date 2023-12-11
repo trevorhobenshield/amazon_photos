@@ -41,30 +41,14 @@ logging.config.dictConfig({
     'version': 1,
     'disable_existing_loggers': False,
     'formatters': {
-        'standard': {
-            'format': '%(asctime)s.%(msecs)03d [%(levelname)s] :: %(message)s',
-            'datefmt': '%Y-%m-%d %H:%M:%S'
-        }
+        'standard': {'format': '%(asctime)s.%(msecs)03d [%(levelname)s] :: %(message)s', 'datefmt': '%Y-%m-%d %H:%M:%S'}
     },
     'handlers': {
-        'file': {
-            'class': 'logging.FileHandler',
-            'level': 'DEBUG',
-            'formatter': 'standard',
-            'filename': 'log.log',
-            'mode': 'a'
-        },
-        'console': {
-            'class': 'logging.StreamHandler',
-            'level': 'WARNING',
-            'formatter': 'standard'
-        }
+        'file': {'class': 'logging.FileHandler', 'level': 'DEBUG', 'formatter': 'standard', 'filename': 'log.log', 'mode': 'a'},
+        'console': {'class': 'logging.StreamHandler', 'level': 'WARNING', 'formatter': 'standard'}
     },
     'loggers': {
-        'my_logger': {
-            'handlers': ['file', 'console'],
-            'level': 'DEBUG'
-        }
+        'my_logger': {'handlers': ['file', 'console'], 'level': 'DEBUG'}
     }
 })
 logger = getLogger(list(Logger.manager.loggerDict)[-1])
@@ -72,8 +56,16 @@ logger = getLogger(list(Logger.manager.loggerDict)[-1])
 
 class AmazonPhotos:
     def __init__(self, *, tld: str = None, cookies: dict = None):
-        self.tld = tld or self.determine_tld(cookies)  # top-level domain
+        self.tld = tld or self.determine_tld(cookies)
         self.base = f'https://www.amazon.{self.tld}'
+        self.base_node_filters = {
+            'asset': 'ALL',
+            'searchOnFamily': 'false',
+            'tempLink': 'false',
+            'offset': 0,
+            'resourceVersion': 'V2',
+            'ContentType': 'JSON',
+        }
         self.client = Client(
             http2=True,
             follow_redirects=True,
@@ -135,7 +127,7 @@ class AmazonPhotos:
 
                 if r.status_code == 401:  # BadAuthenticationData
                     logger.error(f'{r.status_code} {r.text}')
-                    logger.error(f'Cookies expired. Log in to Amazon Photos and copy fresh cookies.')
+                    logger.error(f'Cookies expired. Log-in to Amazon Photos and copy fresh cookies.')
                     sys.exit(1)
                 r.raise_for_status()
                 return r
@@ -160,7 +152,7 @@ class AmazonPhotos:
 
                 if r.status_code == 401:  # BadAuthenticationData
                     logger.error(f'{r.status_code} {r.text}')
-                    logger.error(f'Cookies expired. Log in to Amazon Photos and copy fresh cookies.')
+                    logger.error(f'Cookies expired. Log-in to Amazon Photos and copy fresh cookies.')
                     sys.exit(1)
 
                 r.raise_for_status()
@@ -511,50 +503,6 @@ class AmazonPhotos:
             _out.write_bytes(orjson.dumps(data))
         return data
 
-    def _get_root(self) -> tuple[str, str]:
-        """
-        Get Amazon Photos root node and owner id
-
-        @return: tuple of root node and owner id
-        """
-        r = self.backoff(
-            self.client.get,
-            'https://cdws.us-east-1.amazonaws.com/drive/v2/memories/v1/collections/this_day_filtered',
-            params={'day': 13, 'month': 11, 'includeContents': 'true', 'contentsSize': 1,
-                    '_': int(time.time_ns() // 1e6)},
-        )
-        data = r.json()
-        node = data['collections'][0]['nodes'][0]
-        return node['parents'][0], node['ownerId']
-
-    async def _nodes(self, client: AsyncClient, filters: str, offset: int, limit: int = MAX_LIMIT) -> dict:
-        """
-        Get Amazon Photos nodes
-
-        @param client: an async client instance
-        @param filters: filters to apply to query
-        @param offset: offset to begin query
-        @param limit: max number of results to return per query
-        @return: nodes as a dict
-        """
-        r = await self.async_backoff(
-            client.get,
-            f'{self.base}/drive/v1/nodes',
-            params={
-                'asset': 'ALL',
-                'tempLink': 'false',
-                'limit': limit,
-                'sort': "['modifiedDate DESC']",
-                'filters': filters,
-                'lowResThumbnail': 'true',
-                'offset': offset,
-                'resourceVersion': 'V2',
-                'ContentType': 'JSON',
-                '_': int(time.time_ns() // 1e6)
-            },
-        )
-        return r.json()
-
     def favorite(self, node_ids: list[str] | pd.Series, **kwargs) -> list[dict]:
         """
         Add media to favorites
@@ -848,6 +796,34 @@ class AmazonPhotos:
                 'ContentType': 'JSON',
             }).json()
 
+    async def _nodes(self, client: AsyncClient, filters: str, offset: int, limit: int = MAX_LIMIT) -> dict:
+        """
+        Get Amazon Photos nodes
+
+        @param client: an async client instance
+        @param filters: filters to apply to query
+        @param offset: offset to begin query
+        @param limit: max number of results to return per query
+        @return: nodes as a dict
+        """
+        r = await self.async_backoff(
+            client.get,
+            f'{self.base}/drive/v1/nodes',
+            params={
+                'asset': 'ALL',
+                'tempLink': 'false',
+                'limit': limit,
+                'sort': "['modifiedDate DESC']",
+                'filters': filters,
+                'lowResThumbnail': 'true',
+                'offset': offset,
+                'resourceVersion': 'V2',
+                'ContentType': 'JSON',
+                '_': int(time.time_ns() // 1e6)
+            },
+        )
+        return r.json()
+
     def __nodes_head(self, filters: str = '', offset: int = 0, limit: int = MAX_LIMIT, out: str = 'nodes.json', **kwargs) -> list[dict]:
         """
         Get first 9999 Amazon Photos nodes
@@ -897,3 +873,19 @@ class AmazonPhotos:
         _out.parent.mkdir(parents=True, exist_ok=True)
         _out.write_bytes(orjson.dumps(res))
         return res
+
+    def _get_folder(self, node_id: str, folder_name: str) -> tuple[str, str]:
+        r = self.backoff(
+            self.client.get,
+            f'https://www.amazon.ca/drive/v1/nodes/{node_id}/children',
+            params={'filters': f'kind:FOLDER AND status:(AVAILABLE*) AND name:"{folder_name}"'} | self.base_node_filters
+        )
+        data = r.json()['data'][0]
+        return data['id'], data['ownerId']
+
+    def _get_root(self) -> tuple[str, str]:
+        r = self.backoff(self.client.get, f'{self.base}/drive/v1/nodes', params={'filters': 'isRoot:true'} | self.base_node_filters)
+        nid = r.json()['data'][0]['id']
+        nid, _ = self._get_folder(nid, 'Pictures')
+        root, owner = self._get_folder(nid, 'Web')
+        return root, owner
