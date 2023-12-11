@@ -5,6 +5,7 @@ import math
 import os
 import platform
 import random
+import sys
 import time
 from functools import partial
 from logging import getLogger, Logger
@@ -23,6 +24,7 @@ from .helpers import dump
 try:
     get_ipython()
     import nest_asyncio
+
     nest_asyncio.apply()
 except:
     ...
@@ -30,6 +32,7 @@ except:
 if platform.system() != 'Windows':
     try:
         import uvloop
+
         uvloop.install()
     except:
         ...
@@ -37,14 +40,34 @@ if platform.system() != 'Windows':
 logging.config.dictConfig({
     'version': 1,
     'disable_existing_loggers': False,
-    'formatters': {'standard': {'format': '%(asctime)s.%(msecs)03d [%(levelname)s] :: %(message)s', 'datefmt': '%Y-%m-%d %H:%M:%S'}},
-    'handlers': {
-        'file': {'class': 'logging.FileHandler', 'level': 'DEBUG', 'formatter': 'standard', 'filename': 'log.log', 'mode': 'a'},
+    'formatters': {
+        'standard': {
+            'format': '%(asctime)s.%(msecs)03d [%(levelname)s] :: %(message)s',
+            'datefmt': '%Y-%m-%d %H:%M:%S'
+        }
     },
-    'loggers': {'my_logger': {'handlers': ['file'], 'level': 'DEBUG'}}
+    'handlers': {
+        'file': {
+            'class': 'logging.FileHandler',
+            'level': 'DEBUG',
+            'formatter': 'standard',
+            'filename': 'log.log',
+            'mode': 'a'
+        },
+        'console': {
+            'class': 'logging.StreamHandler',
+            'level': 'WARNING',
+            'formatter': 'standard'
+        }
+    },
+    'loggers': {
+        'my_logger': {
+            'handlers': ['file', 'console'],
+            'level': 'DEBUG'
+        }
+    }
 })
-logger_name = list(Logger.manager.loggerDict)[-1]
-logger = getLogger(logger_name)
+logger = getLogger(list(Logger.manager.loggerDict)[-1])
 
 
 class AmazonPhotos:
@@ -75,8 +98,8 @@ class AmazonPhotos:
         @return: top-level domain
         """
         for k, v in cookies.items():
-            if k.startswith('at-acb'):
-                return k[-2:]
+            if k.startswith(x := 'at-acb'):
+                return k.split(x)[-1]
 
     async def process(self, fns: list | Generator, **kwargs) -> list:
         """
@@ -86,12 +109,16 @@ class AmazonPhotos:
         @return: list of results
         """
         client = AsyncClient(
-            http2=True,
-            timeout=60,
-            follow_redirects=True,
+            http2=kwargs.pop('http2', True),
+            timeout=kwargs.pop('timeout', 15),
+            follow_redirects=kwargs.pop('follow_redirects', True),
             headers=self.client.headers,
             cookies=self.client.cookies,
-            limits=Limits(max_connections=1000),
+            limits=Limits(
+                max_connections=kwargs.pop('max_connections', 1000),
+                max_keepalive_connections=kwargs.pop('max_keepalive_connections', None),
+                keepalive_expiry=kwargs.pop('keepalive_expiry', 5.0),
+            ),
         )
         async with client as c:
             return await tqdm_asyncio.gather(*(fn(client=c) for fn in fns), desc=kwargs.get('desc'))
@@ -102,9 +129,14 @@ class AmazonPhotos:
         for i in range(max_retries + 1):
             try:
                 r = await fn(*args, **kwargs)
-                if r.status_code == 409:
+                if r.status_code == 409:  # conflict
                     logger.debug(f'{r.status_code} {r.text}')
                     return r
+
+                if r.status_code == 401:  # BadAuthenticationData
+                    logger.error(f'{r.status_code} {r.text}')
+                    logger.error(f'Cookies expired. Log-in to Amazon Photos and copy fresh cookies.')
+                    sys.exit(1)
                 r.raise_for_status()
                 return r
             except Exception as e:
@@ -121,9 +153,16 @@ class AmazonPhotos:
         for i in range(max_retries + 1):
             try:
                 r = fn(*args, **kwargs)
-                if r.status_code == 409:
+
+                if r.status_code == 409:  # conflict
                     logger.debug(f'{r.status_code} {r.text}')
                     return r
+
+                if r.status_code == 401:  # BadAuthenticationData
+                    logger.error(f'{r.status_code} {r.text}')
+                    logger.error(f'Cookies expired. Log-in to Amazon Photos and copy fresh cookies.')
+                    sys.exit(1)
+
                 r.raise_for_status()
                 return r
             except Exception as e:
@@ -189,8 +228,7 @@ class AmazonPhotos:
         )
         return r.json()
 
-    def query(self, filters: str = "type:(PHOTOS OR VIDEOS)", offset: int = 0, limit: int = math.inf,
-              out: str = 'ap.parquet', as_df: bool = True) -> list[dict] | pd.DataFrame:
+    def query(self, filters: str = "type:(PHOTOS OR VIDEOS)", offset: int = 0, limit: int = math.inf, out: str = 'ap.parquet', as_df: bool = True, **kwargs) -> list[dict] | pd.DataFrame:
         """
         Search all media in Amazon Photos
 
@@ -223,7 +261,7 @@ class AmazonPhotos:
             return dump(as_df, res, out)
         offsets = range(offset, min(initial['count'], limit), MAX_LIMIT)
         fns = (partial(self.q, offset=o, filters=filters, limit=MAX_LIMIT) for o in offsets)
-        res.extend(asyncio.run(self.process(fns, desc='getting media')))
+        res.extend(asyncio.run(self.process(fns, desc='getting media', **kwargs)))
         return dump(as_df, res, out)
 
     def photos(self, **kwargs) -> list[dict] | pd.DataFrame:
@@ -234,7 +272,7 @@ class AmazonPhotos:
         """Convenience method to get all videos"""
         return self.query('type:(VIDEOS)', **kwargs)
 
-    def upload(self, files: list[Path | str] | Generator, chunk_size=64 * 1024) -> list[dict]:
+    def upload(self, files: list[Path | str] | Generator, chunk_size=64 * 1024, **kwargs) -> list[dict]:
         async def stream_bytes(file: Path) -> bytes:
             async with aiofiles.open(file, 'rb') as f:
                 while chunk := await f.read(chunk_size):
@@ -265,9 +303,9 @@ class AmazonPhotos:
             return data
 
         fns = (partial(upload_file, file=file) for file in files)
-        return asyncio.run(self.process(fns, desc='Uploading Files'))
+        return asyncio.run(self.process(fns, desc='Uploading Files', **kwargs))
 
-    def download(self, node_ids: list[str] | pd.Series, out: str = 'media', chunk_size: int = None) -> dict:
+    def download(self, node_ids: list[str] | pd.Series, out: str = 'media', chunk_size: int = None, **kwargs) -> dict:
         """
         Download files from Amazon Photos
 
@@ -300,11 +338,10 @@ class AmazonPhotos:
                 logger.debug(f'Download FAILED for {node}\t{e}')
 
         fns = (partial(get, node=node) for node in node_ids)
-        asyncio.run(self.process(fns, desc='Downloading media'))
+        asyncio.run(self.process(fns, desc='Downloading media', **kwargs))
         return {'timestamp': time.time_ns(), 'nodes': node_ids}
 
-    def trashed(self, filters: str = '', offset: int = 0, limit: int = MAX_LIMIT, as_df: bool = True,
-                out: str = 'trashed.json') -> list[dict]:
+    def trashed(self, filters: str = '', offset: int = 0, limit: int = MAX_LIMIT, as_df: bool = True, out: str = 'trashed.json', **kwargs) -> list[dict]:
         """
         Get trashed media. Essentially a view your trash bin in Amazon Photos.
 
@@ -341,10 +378,10 @@ class AmazonPhotos:
         else:
             offsets = range(offset, min(initial['count'], limit), MAX_LIMIT)
         fns = (partial(self._nodes, offset=o, filters=filters, limit=MAX_LIMIT) for o in offsets)
-        res.extend(asyncio.run(self.process(fns, desc='getting trashed media')))
+        res.extend(asyncio.run(self.process(fns, desc='getting trashed media', **kwargs)))
         return dump(as_df, res, out)
 
-    def trash(self, node_ids: list[str] | pd.Series) -> list[dict]:
+    def trash(self, node_ids: list[str] | pd.Series, **kwargs) -> list[dict]:
         """
         Move media to trash bin
 
@@ -370,7 +407,7 @@ class AmazonPhotos:
 
         id_batches = [node_ids[i:i + MAX_TRASH_BATCH] for i in range(0, len(node_ids), MAX_TRASH_BATCH)]
         fns = (partial(patch, ids=ids) for ids in id_batches)
-        return asyncio.run(self.process(fns, desc='trashing files'))
+        return asyncio.run(self.process(fns, desc='trashing files', **kwargs))
 
     def restore(self, node_ids: list[str] | pd.Series) -> Response:
         """
@@ -395,7 +432,7 @@ class AmazonPhotos:
             }
         )
 
-    def delete(self, node_ids: list[str] | pd.Series) -> list[dict]:
+    def delete(self, node_ids: list[str] | pd.Series, **kwargs) -> list[dict]:
         """
         Permanently delete media from Amazon Photos
 
@@ -419,7 +456,7 @@ class AmazonPhotos:
 
         id_batches = [node_ids[i:i + MAX_PURGE_BATCH] for i in range(0, len(node_ids), MAX_PURGE_BATCH)]
         fns = (partial(post, ids=ids) for ids in id_batches)
-        return asyncio.run(self.process(fns, desc='trashing files'))
+        return asyncio.run(self.process(fns, desc='trashing files', **kwargs))
 
     def aggregations(self, category: str, out: str = 'aggregations') -> dict:
         """
@@ -518,7 +555,7 @@ class AmazonPhotos:
         )
         return r.json()
 
-    def favorite(self, node_ids: list[str] | pd.Series) -> list[dict]:
+    def favorite(self, node_ids: list[str] | pd.Series, **kwargs) -> list[dict]:
         """
         Add media to favorites
 
@@ -540,9 +577,9 @@ class AmazonPhotos:
             return r.json()
 
         fns = (partial(patch, ids=ids) for ids in node_ids)
-        return asyncio.run(self.process(fns, desc='adding media to favorites'))
+        return asyncio.run(self.process(fns, desc='adding media to favorites', **kwargs))
 
-    def unfavorite(self, node_ids: list[str] | pd.Series) -> list[dict]:
+    def unfavorite(self, node_ids: list[str] | pd.Series, **kwargs) -> list[dict]:
         """
         Remove media from favorites
 
@@ -564,7 +601,7 @@ class AmazonPhotos:
             return r.json()
 
         fns = (partial(patch, ids=ids) for ids in node_ids)
-        return asyncio.run(self.process(fns, desc='removing media from favorites'))
+        return asyncio.run(self.process(fns, desc='removing media from favorites', **kwargs))
 
     def create_album(self, album_name: str, node_ids: list[str] | pd.Series):
         """
@@ -658,7 +695,7 @@ class AmazonPhotos:
             }
         ).json()
 
-    def hide(self, node_ids: list[str] | pd.Series) -> list[dict]:
+    def hide(self, node_ids: list[str] | pd.Series, **kwargs) -> list[dict]:
         """
         Hide media
 
@@ -683,9 +720,9 @@ class AmazonPhotos:
             return r.json()
 
         fns = (partial(patch, ids=ids) for ids in node_ids)
-        return asyncio.run(self.process(fns, desc='hiding media'))
+        return asyncio.run(self.process(fns, desc='hiding media', **kwargs))
 
-    def unhide(self, node_ids: list[str] | pd.Series) -> list[dict]:
+    def unhide(self, node_ids: list[str] | pd.Series, **kwargs) -> list[dict]:
         """
         Unhide media
 
@@ -710,7 +747,7 @@ class AmazonPhotos:
             return r.json()
 
         fns = (partial(patch, ids=ids) for ids in node_ids)
-        return asyncio.run(self.process(fns, desc='unhiding media'))
+        return asyncio.run(self.process(fns, desc='unhiding media', **kwargs))
 
     def rename_cluster(self, cluster_id: str, name: str) -> dict:
         """
@@ -811,8 +848,7 @@ class AmazonPhotos:
                 'ContentType': 'JSON',
             }).json()
 
-    def __nodes_head(self, filters: str = '', offset: int = 0, limit: int = MAX_LIMIT, out: str = 'nodes.json') -> list[
-        dict]:
+    def __nodes_head(self, filters: str = '', offset: int = 0, limit: int = MAX_LIMIT, out: str = 'nodes.json', **kwargs) -> list[dict]:
         """
         Get first 9999 Amazon Photos nodes
 
@@ -855,7 +891,7 @@ class AmazonPhotos:
             # offsets = [i for i in range(0, initial['count'], limit)]
             offsets = range(offset, min(initial['count'], limit), MAX_LIMIT)
         fns = (partial(self._nodes, offset=o, filters=filters, limit=MAX_LIMIT) for o in offsets)
-        res.extend(asyncio.run(self.process(fns, desc='getting media')))
+        res.extend(asyncio.run(self.process(fns, desc='getting media', **kwargs)))
         # save to disk
         _out = Path(out)
         _out.parent.mkdir(parents=True, exist_ok=True)
