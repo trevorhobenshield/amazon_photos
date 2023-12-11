@@ -23,6 +23,7 @@ from .helpers import dump
 try:
     get_ipython()
     import nest_asyncio
+
     nest_asyncio.apply()
 except:
     ...
@@ -30,10 +31,10 @@ except:
 if platform.system() != 'Windows':
     try:
         import uvloop
+
         uvloop.install()
     except:
         ...
-
 
 logging.config.dictConfig({
     'version': 1,
@@ -49,8 +50,8 @@ logger = getLogger(logger_name)
 
 
 class AmazonPhotos:
-    def __init__(self, tld: str):
-        self.tld = tld  # top-level domain
+    def __init__(self, *, tld: str = None, cookies: dict = None):
+        self.tld = tld or self.determine_tld(cookies)  # top-level domain
         self.base = f'https://www.amazon.{self.tld}'
         self.client = Client(
             http2=True,
@@ -58,15 +59,26 @@ class AmazonPhotos:
             timeout=60,
             headers={
                 'user-agent': random.choice(USER_AGENTS),
-                'x-amzn-sessionid': os.getenv('session_id'),
+                'x-amzn-sessionid': cookies.get('session_id') if cookies else os.getenv('session_id'),
             },
-            cookies={
+            cookies=cookies or {
                 f'ubid-acb{tld}': os.getenv(f'ubid_acb{tld}'),
                 f'at-acb{tld}': os.getenv(f'at_acb{tld}'),
                 'session-id': os.getenv('session_id'),
             }
         )
         self.root, self.owner_id = self._get_root()
+
+    def determine_tld(self, cookies: dict) -> str:
+        """
+        Determine top-level domain based on cookies
+
+        @param cookies: cookies dict
+        @return: top-level domain
+        """
+        for k, v in cookies.items():
+            if k.startswith('at-acb'):
+                return k[-2:]
 
     async def process(self, fns: list | Generator, **kwargs) -> list:
         """
