@@ -57,7 +57,7 @@ class AmazonPhotos:
             timeout=60,
             headers={
                 'user-agent': random.choice(USER_AGENTS),
-                'x-amzn-sessionid': cookies.get('session_id') if cookies else os.getenv('session_id'),
+                'x-amzn-sessionid': cookies.get('session-id') if cookies else os.getenv('session_id'),
             },
             cookies=cookies or {
                 f'ubid-acb{tld}': os.getenv(f'ubid_acb{tld}'),
