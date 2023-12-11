@@ -135,7 +135,7 @@ class AmazonPhotos:
 
                 if r.status_code == 401:  # BadAuthenticationData
                     logger.error(f'{r.status_code} {r.text}')
-                    logger.error(f'Cookies expired. Log-in to Amazon Photos and copy fresh cookies.')
+                    logger.error(f'Cookies expired. Log in to Amazon Photos and copy fresh cookies.')
                     sys.exit(1)
                 r.raise_for_status()
                 return r
@@ -160,7 +160,7 @@ class AmazonPhotos:
 
                 if r.status_code == 401:  # BadAuthenticationData
                     logger.error(f'{r.status_code} {r.text}')
-                    logger.error(f'Cookies expired. Log-in to Amazon Photos and copy fresh cookies.')
+                    logger.error(f'Cookies expired. Log in to Amazon Photos and copy fresh cookies.')
                     sys.exit(1)
 
                 r.raise_for_status()

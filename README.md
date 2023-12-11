@@ -13,16 +13,45 @@
 pip install amazon-photos
 ```
 
+> It is recommended to use this API in a [Jupyter Notebook](https://jupyter.org/install), as the results from most endpoints
+> are a [DataFrame](https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.html#pandas.DataFrame)
+> which can be neatly displayed in a notebook, and efficiently manipulated with vectorized operations. This becomes
+> increasingly important when dealing with large quantities of data.
+
 ## Setup
 
-These environment variables must be set. Log in to Amazon Photos and copy the cookies:
+There are two ways to set up authentication. The first is to pass the cookies explicitly to the `AmazonPhotos`
+constructor, the second is to add your cookies as environment variables.
+
+Log in to Amazon Photos and copy the cookies:
+
 - *`ubid-acbxx`
 - *`at-acbxx`
 - `session-id`
 
-*replace `xx` with your country code
+*Replace `xx` with your country code
 
-E.g. for amazon.ca, you would add to your `~/.bashrc`:
+### Option 1: Cookies Dict
+
+```python
+from amazon_photos import AmazonPhotos
+
+ap = AmazonPhotos(
+    cookies={
+        "session-id": ...,
+        "ubid-acbca": ...,
+        "at-acbca": ...,
+    }
+)
+
+# sanity check, verify authenticated endpoint can be reached
+ap.usage()
+```
+
+### Option 2: Environment Variables
+
+E.g. for amazon.**ca** (Canada), you would add to your `~/.bashrc`:
+
 ```bash
 export session_id="..."
 export ubid_acbca="..."
@@ -63,20 +92,37 @@ AND favorite:(true)
 from pathlib import Path
 from amazon_photos import AmazonPhotos
 
-# e.g. using amazon.ca
-ap = AmazonPhotos(tld="ca")
+## e.g. using cookies dict
+ap = AmazonPhotos(cookies={
+    "at-acbca": ...,
+    "ubid-acbca": ...,
+    "session-id": ...,
+})
+
+## e.g. using env variables and specifying tld. E.g. amazon.ca (Canada)
+# ap = AmazonPhotos(tld="ca")
+
+# get current usage stats
+ap.usage()
 
 # get entire Amazon Photos library. (default save to `ap.parquet`)
 nodes = ap.query("type:(PHOTOS OR VIDEOS)")
 
 # query Amazon Photos library with more filters applied. (default save to `ap.parquet`)
-nodes = ap.query("type:(PHOTOS OR VIDEOS) AND things:(plant AND beach OR moon) AND timeYear:(2023) AND timeMonth:(8) AND timeDay:(14) AND location:(CAN#BC#Vancouver)")
+nodes = ap.query(
+    "type:(PHOTOS OR VIDEOS) AND things:(plant AND beach OR moon) AND timeYear:(2023) AND timeMonth:(8) AND timeDay:(14) AND location:(CAN#BC#Vancouver)")
 
 # sample first 10 nodes
 node_ids = nodes.id[:10]
 
 # move a batch of images/videos to the trash bin
 ap.trash(node_ids)
+
+# get trash bin contents
+ap.trashed()
+
+# permanently delete a batch of images/videos.
+ap.delete(node_ids)
 
 # restore a batch of images/videos from the trash bin
 ap.restore(node_ids)
@@ -88,26 +134,17 @@ ap.upload(files)
 # download a batch of images/videos
 ap.download(node_ids)
 
-# permanently delete a batch of images/videos.
-ap.delete(node_ids)
-
-# convenience method to get all photos
+# convenience method to get photos only
 ap.photos()
 
-# convenience method to get all videos
+# convenience method to get videos only
 ap.videos()
-
-# get current usage stats
-ap.usage()
 
 # get all identifiers calculated by Amazon.
 ap.aggregations(category="all")
 
 # get specific identifiers calculated by Amazon.
 ap.aggregations(category="location")
-
-# get trash bin contents
-ap.trashed()
 ```
 
 ## Common Paramters
