@@ -3,6 +3,7 @@ import hashlib
 import logging.config
 import math
 import os
+import platform
 import random
 import time
 from functools import partial
@@ -21,26 +22,24 @@ from .helpers import dump
 
 try:
     import nest_asyncio
-
     nest_asyncio.apply()
 except:
     ...
 
-try:
-    import uvloop
+if platform.system() != 'Windows':
+    try:
+        import uvloop
+        uvloop.install()
+    except:
+        ...
 
-    uvloop.install()
-except:
-    ...
 
 logging.config.dictConfig({
     'version': 1,
-    'disable_existing_loggers': True,
-    'formatters': {'standard': {'format': '%(asctime)s.%(msecs)03d [%(levelname)s] :: %(message)s',
-                                'datefmt': '%Y-%m-%d %H:%M:%S'}},
+    'disable_existing_loggers': False,
+    'formatters': {'standard': {'format': '%(asctime)s.%(msecs)03d [%(levelname)s] :: %(message)s', 'datefmt': '%Y-%m-%d %H:%M:%S'}},
     'handlers': {
-        'file': {'class': 'logging.FileHandler', 'level': 'DEBUG', 'formatter': 'standard', 'filename': 'log.log',
-                 'mode': 'a'},
+        'file': {'class': 'logging.FileHandler', 'level': 'DEBUG', 'formatter': 'standard', 'filename': 'log.log', 'mode': 'a'},
     },
     'loggers': {'my_logger': {'handlers': ['file'], 'level': 'DEBUG'}}
 })
@@ -257,13 +256,17 @@ class AmazonPhotos:
         fns = (partial(upload_file, file=file) for file in files)
         return asyncio.run(self.process(fns, desc='Uploading Files'))
 
-    def download(self, node_ids: list[str], out: str = 'media', chunk_size: int = None) -> dict:
+    def download(self, node_ids: list[str] | pd.Series, out: str = 'media', chunk_size: int = None) -> dict:
         """
         Download files from Amazon Photos
 
         @param node_ids: list of media node ids to download
         @param out: path to save files
         """
+
+        if isinstance(node_ids, pd.Series):
+            node_ids = node_ids.tolist()
+
         out = Path(out)
         out.mkdir(parents=True, exist_ok=True)
         params = {
@@ -287,7 +290,7 @@ class AmazonPhotos:
 
         fns = (partial(get, node=node) for node in node_ids)
         asyncio.run(self.process(fns, desc='Downloading media'))
-        return {'timestamp': time.time_ns(), 'nodes': list(node_ids)}
+        return {'timestamp': time.time_ns(), 'nodes': node_ids}
 
     def trashed(self, filters: str = '', offset: int = 0, limit: int = MAX_LIMIT, as_df: bool = True,
                 out: str = 'trashed.json') -> list[dict]:
@@ -330,13 +333,16 @@ class AmazonPhotos:
         res.extend(asyncio.run(self.process(fns, desc='getting trashed media')))
         return dump(as_df, res, out)
 
-    def trash(self, node_ids: list[str]) -> list[dict]:
+    def trash(self, node_ids: list[str] | pd.Series) -> list[dict]:
         """
         Move media to trash bin
 
         @param node_ids: list of media ids to trash
         @return: the trash response
         """
+
+        if isinstance(node_ids, pd.Series):
+            node_ids = node_ids.tolist()
 
         async def patch(client: AsyncClient, ids: list[str]) -> Response:
             return await client.patch(
@@ -355,13 +361,17 @@ class AmazonPhotos:
         fns = (partial(patch, ids=ids) for ids in id_batches)
         return asyncio.run(self.process(fns, desc='trashing files'))
 
-    def restore(self, node_ids: list[str]) -> Response:
+    def restore(self, node_ids: list[str] | pd.Series) -> Response:
         """
         Restore media from trash bin
 
         @param node_ids: list of media ids to restore
         @return: the restore response
         """
+
+        if isinstance(node_ids, pd.Series):
+            node_ids = node_ids.tolist()
+
         return self.client.patch(
             f'{self.base}/drive/v1/trash',
             json={
@@ -374,13 +384,16 @@ class AmazonPhotos:
             }
         )
 
-    def delete(self, node_ids: list[str]) -> list[dict]:
+    def delete(self, node_ids: list[str] | pd.Series) -> list[dict]:
         """
         Permanently delete media from Amazon Photos
 
         @param node_ids: list of media ids to delete
         @return: the delete response
         """
+
+        if isinstance(node_ids, pd.Series):
+            node_ids = node_ids.tolist()
 
         async def post(client: AsyncClient, ids: list[str]) -> Response:
             return await client.post(
@@ -494,13 +507,16 @@ class AmazonPhotos:
         )
         return r.json()
 
-    def favorite(self, node_ids: list[str]) -> list[dict]:
+    def favorite(self, node_ids: list[str] | pd.Series) -> list[dict]:
         """
         Add media to favorites
 
         @param node_ids: media node ids to add to favorites
         @return: operation response
         """
+
+        if isinstance(node_ids, pd.Series):
+            node_ids = node_ids.tolist()
 
         async def patch(client: AsyncClient, node_id: str) -> dict:
             r = await client.patch(f'{self.base}/drive/v1/nodes/{node_id}', json={
@@ -515,13 +531,16 @@ class AmazonPhotos:
         fns = (partial(patch, ids=ids) for ids in node_ids)
         return asyncio.run(self.process(fns, desc='adding media to favorites'))
 
-    def unfavorite(self, node_ids: list[str]) -> list[dict]:
+    def unfavorite(self, node_ids: list[str] | pd.Series) -> list[dict]:
         """
         Remove media from favorites
 
         @param node_ids: media node ids to remove from favorites
         @return: operation response
         """
+
+        if isinstance(node_ids, pd.Series):
+            node_ids = node_ids.tolist()
 
         async def patch(client: AsyncClient, node_id: str) -> dict:
             r = await client.patch(f'{self.base}/drive/v1/nodes/{node_id}', json={
@@ -536,7 +555,7 @@ class AmazonPhotos:
         fns = (partial(patch, ids=ids) for ids in node_ids)
         return asyncio.run(self.process(fns, desc='removing media from favorites'))
 
-    def create_album(self, album_name: str, node_ids: list[str]):
+    def create_album(self, album_name: str, node_ids: list[str] | pd.Series):
         """
         Create album
 
@@ -544,6 +563,10 @@ class AmazonPhotos:
         @param node_ids: media node ids to add to album
         @return: operation response
         """
+
+        if isinstance(node_ids, pd.Series):
+            node_ids = node_ids.tolist()
+
         r = self.client.post(f'{self.base}/drive/v1/nodes', json={
             'kind': 'VISUAL_COLLECTION',
             'name': album_name,
@@ -580,7 +603,7 @@ class AmazonPhotos:
             }
         ).json()
 
-    def add_to_album(self, album_id: str, node_ids: list[str]) -> dict:
+    def add_to_album(self, album_id: str, node_ids: list[str] | pd.Series) -> dict:
         """
         Add media to album
 
@@ -588,6 +611,10 @@ class AmazonPhotos:
         @param node_ids: media node ids to add to album
         @return: operation response
         """
+
+        if isinstance(node_ids, pd.Series):
+            node_ids = node_ids.tolist()
+
         return self.client.patch(
             f'{self.base}/drive/v1/nodes/{album_id}/children',
             json={
@@ -598,7 +625,7 @@ class AmazonPhotos:
             }
         ).json()
 
-    def remove_from_album(self, album_id: str, node_ids: list[str]):
+    def remove_from_album(self, album_id: str, node_ids: list[str] | pd.Series):
         """
         Remove media from album
 
@@ -606,6 +633,10 @@ class AmazonPhotos:
         @param node_ids: media node ids to remove from album
         @return: operation response
         """
+
+        if isinstance(node_ids, pd.Series):
+            node_ids = node_ids.tolist()
+
         return self.client.patch(
             f'{self.base}/drive/v1/nodes/{album_id}/children',
             json={
@@ -616,13 +647,16 @@ class AmazonPhotos:
             }
         ).json()
 
-    def hide(self, node_ids: list[str]) -> list[dict]:
+    def hide(self, node_ids: list[str] | pd.Series) -> list[dict]:
         """
         Hide media
 
         @param node_ids: node ids to hide
         @return: operation response
         """
+
+        if isinstance(node_ids, pd.Series):
+            node_ids = node_ids.tolist()
 
         async def patch(client: AsyncClient, node_id: str) -> dict:
             r = await client.patch(
@@ -640,13 +674,16 @@ class AmazonPhotos:
         fns = (partial(patch, ids=ids) for ids in node_ids)
         return asyncio.run(self.process(fns, desc='hiding media'))
 
-    def unhide(self, node_ids: list[str]) -> list[dict]:
+    def unhide(self, node_ids: list[str] | pd.Series) -> list[dict]:
         """
         Unhide media
 
         @param node_ids: node ids to unhide
         @return: operation response
         """
+
+        if isinstance(node_ids, pd.Series):
+            node_ids = node_ids.tolist()
 
         async def patch(client: AsyncClient, node_id: str) -> dict:
             r = await client.patch(
@@ -682,7 +719,7 @@ class AmazonPhotos:
             'ContentType': 'JSON',
         }).json()
 
-    def combine_clusters(self, cluster_ids: list[str], name: str) -> dict:
+    def combine_clusters(self, cluster_ids: list[str] | pd.Series, name: str) -> dict:
         """
         Combine clusters
 
@@ -692,6 +729,10 @@ class AmazonPhotos:
         @param name: name of new combined cluster
         @return: operation response
         """
+
+        if isinstance(cluster_ids, pd.Series):
+            cluster_ids = cluster_ids.tolist()
+
         return self.client.post(f'{self.base}/drive/v1/cluster', json={
             'clusterIds': cluster_ids,
             'newName': name,
@@ -717,7 +758,7 @@ class AmazonPhotos:
                 'ContentType': 'JSON',
             }).json()
 
-    def add_to_family_vault(self, family_id: str, node_ids: list[str]) -> dict:
+    def add_to_family_vault(self, family_id: str, node_ids: list[str] | pd.Series) -> dict:
         """
         Add media to family vault
 
@@ -725,6 +766,10 @@ class AmazonPhotos:
         @param node_ids: node ids to add to family vault
         @return: operation response
         """
+
+        if isinstance(node_ids, pd.Series):
+            node_ids = node_ids.tolist()
+
         return self.client.post(
             f'{self.base}/drive/v1/familyArchive/', json={
                 'nodesToAdd': node_ids,
@@ -734,7 +779,7 @@ class AmazonPhotos:
                 'ContentType': 'JSON',
             }).json()
 
-    def remove_from_family_vault(self, family_id: str, node_ids: list[str]) -> dict:
+    def remove_from_family_vault(self, family_id: str, node_ids: list[str] | pd.Series) -> dict:
         """
         Remove media from family vault
 
@@ -742,6 +787,10 @@ class AmazonPhotos:
         @param node_ids: node ids to remove from family vault
         @return: operation response
         """
+
+        if isinstance(node_ids, pd.Series):
+            node_ids = node_ids.tolist()
+
         return self.client.post(
             f'{self.base}/drive/v1/familyArchive/', json={
                 'nodesToAdd': [],
