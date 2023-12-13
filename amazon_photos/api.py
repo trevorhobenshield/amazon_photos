@@ -39,25 +39,12 @@ if platform.system() != 'Windows':
     except:
         ...
 
-logging.config.dictConfig({
-    'version': 1,
-    'disable_existing_loggers': False,
-    'formatters': {
-        'standard': {'format': '%(asctime)s.%(msecs)03d [%(levelname)s] :: %(message)s', 'datefmt': '%Y-%m-%d %H:%M:%S'}
-    },
-    'handlers': {
-        'file': {'class': 'logging.FileHandler', 'level': 'DEBUG', 'formatter': 'standard', 'filename': 'log.log', 'mode': 'a'},
-        'console': {'class': 'logging.StreamHandler', 'level': 'WARNING', 'formatter': 'standard'}
-    },
-    'loggers': {
-        'my_logger': {'handlers': ['file', 'console'], 'level': 'DEBUG'}
-    }
-})
+logging.config.dictConfig(LOG_CONFIG)
 logger = getLogger(list(Logger.manager.loggerDict)[-1])
 
 
 class AmazonPhotos:
-    def __init__(self, *, tld: str = None, cookies: dict = None, db_path: str = '', **kwargs):
+    def __init__(self, *, tld: str = None, cookies: dict = None, **kwargs):
         self.tld = tld or self.determine_tld(cookies)
         self.base = f'https://www.amazon.{self.tld}'
         self.base_params = {
@@ -80,10 +67,13 @@ class AmazonPhotos:
                 'session-id': os.getenv('session_id'),
             }
         )
+        self.use_cache = kwargs.pop('use_cache', False)
+        self.db_path = Path(kwargs.pop('db_path', ''))
+        self.cache_path = Path(kwargs.pop('cache_path', ''))
+        self.cache = self.load_cache()
         self.root = self.get_root()
         self.folders = self.get_folders()
-        self.init_time = int(time.time_ns() // 1e6)
-        self.db = self.load_db(db_path, **kwargs)
+        self.db = self.load_db(**kwargs)
 
     def determine_tld(self, cookies: dict) -> str:
         """
@@ -951,15 +941,37 @@ class AmazonPhotos:
         res.extend(asyncio.run(self.process(fns, desc='Getting Nodes', **kwargs)))
         return res
 
+    def update_cache(self, **kwargs):
+        if self.cache_path.name:
+            try:
+                self.cache |= kwargs
+                self.cache_path.write_bytes(orjson.dumps(self.cache))  # save to cache
+            except Exception as e:
+                logger.warning(f'Failed to update cache\t{kwargs = }\t{e}')
+        # cache not set, skip
+
+    def get_cache(self, key: str):
+        if self.use_cache:
+            if self.cache and (x := self.cache.get(key)):
+                logger.info(f'Using cached {key} from `{self.cache_path}`')
+                return x
+
     def get_root(self) -> dict:
         """
         isRoot:true filter is sketchy, can add extra data and request is still valid.
         seems like only check is something like: `if(data.contains("true"))`
         """
-        r = self.backoff(self.client.get, f'{self.base}/drive/v1/nodes', params={'filters': 'isRoot:true'} | self.base_params)
-        return r.json()['data'][0]
+        if x := self.get_cache('root'):
+            return x
 
-    def get_folders(self, folder_id: str = None, debug: int = 0):
+        r = self.backoff(self.client.get, f'{self.base}/drive/v1/nodes', params={'filters': 'isRoot:true'} | self.base_params)
+        root = r.json()['data'][0]
+        logger.debug(f'Got root node: {root}')
+
+        self.update_cache(root=root)
+        return root
+
+    def get_folders(self, folder_id: str = None) -> list[dict]:
 
         def _get(id: str) -> list[dict]:
             url = f'https://www.amazon.ca/drive/v1/nodes/{id}/children'
@@ -968,15 +980,18 @@ class AmazonPhotos:
             return r.json()['data']
 
         def helper(folder: dict) -> dict:
-            if debug:
-                logger.debug(f'Scanning {folder["name"]}')
+            logger.debug(f'Scanning folder `{folder["name"]}` ({folder["id"]})')
             data = folder | {'children': []}
             folders = _get(folder['id'])
             for sub in folders:
                 data['children'].append(helper(sub))
             return data
 
-        return [helper(node) for node in _get(folder_id or self.root['id'])]
+        if x := self.get_cache('folders'):
+            return x
+        folders = [helper(node) for node in _get(folder_id or self.root['id'])]
+        self.update_cache(folders=folders)
+        return folders
 
     def find_folder(self, path: str):
         def helper(curr: list[dict], remaining: list[str]) -> dict | list[dict]:
@@ -1037,20 +1052,6 @@ class AmazonPhotos:
         # self.client.cookies.update({'at-acb': at})
         return at
 
-    def load_db(self, db_path: str, **kwargs):
-        df = None
-        if db_path and Path(db_path).exists():
-            try:
-                df = pd.read_parquet(db_path, **kwargs)
-            except Exception as e:
-                logger.warning(f'Failed to load db `{db_path}`\t{e}')
-        else:
-            logger.warning(f'Database `{db_path}` not found, initializing new database')
-            df = self.query()
-            Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-            df.to_parquet(db_path)
-        return df
-
     def refresh_db(self) -> pd.DataFrame:
         now = datetime.now()
         y, m, d = f'timeYear:({now.year})', f'timeMonth:({now.month})', f'timeDay:({now.day})'
@@ -1086,4 +1087,27 @@ class AmazonPhotos:
         valid_date_cols = list(date_cols & set(df.columns))
         df[valid_date_cols] = df[valid_date_cols].apply(pd.to_datetime, format='%Y-%m-%dT%H:%M:%S.%fZ', errors='coerce')
         df.to_parquet('self.parquet')
+        return df
+
+    def load_cache(self) -> dict:
+        if self.cache_path.name:  # ''
+            if self.cache_path.exists():
+                logger.info(f'Loading cache: {self.cache_path}')
+                return orjson.loads(self.cache_path.read_bytes())
+            self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+            self.cache_path.write_text('{}')
+        return {}
+
+    def load_db(self, **kwargs):
+        df = None
+        if self.db_path.name and self.db_path.exists():
+            try:
+                df = pd.read_parquet(self.db_path, **kwargs)
+            except Exception as e:
+                logger.warning(f'Failed to load db `{self.db_path}`\t{e}')
+        else:
+            logger.warning(f'Database `{self.db_path}` not found, initializing new database')
+            df = self.query()
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            df.to_parquet(self.db_path)
         return df
