@@ -46,7 +46,7 @@ logger = getLogger(list(Logger.manager.loggerDict)[-1])
 class AmazonPhotos:
     def __init__(self, *, tld: str = None, cookies: dict = None, **kwargs):
         self.tld = tld or self.determine_tld(cookies)
-        self.base = f'https://www.amazon.{self.tld}'
+        self.base = f'https://www.amazon.{self.tld}/drive/v1'
         self.base_params = {
             'asset': 'ALL',
             'tempLink': 'false',
@@ -110,7 +110,7 @@ class AmazonPhotos:
 
     @staticmethod
     async def async_backoff(fn, *args, m: int = 20, b: int = 2, max_retries: int = 12, **kwargs) -> any:
-        """Async exponential backoff"""
+        """Async truncated exponential backoff"""
         for i in range(max_retries + 1):
             try:
                 r = await fn(*args, **kwargs)
@@ -134,7 +134,7 @@ class AmazonPhotos:
 
     @staticmethod
     def backoff(fn, *args, m: int = 20, b: int = 2, max_retries: int = 12, **kwargs) -> any:
-        """Exponential backoff"""
+        """Exponential truncated exponential backoff"""
         for i in range(max_retries + 1):
             try:
                 r = fn(*args, **kwargs)
@@ -167,7 +167,7 @@ class AmazonPhotos:
         """
         r = self.backoff(
             self.client.get,
-            f'{self.base}/drive/v1/account/usage',
+            f'{self.base}/account/usage',
             params={"resourceVersion": "V2", "ContentType": "JSON", "_": int(time.time_ns() // 1e6)},
         )
         data = r.json()
@@ -197,7 +197,7 @@ class AmazonPhotos:
         """
         r = await self.async_backoff(
             client.get,
-            f'{self.base}/drive/v1/search',
+            f'{self.base}/search',
             params={
                        "limit": limit,
                        "offset": offset,
@@ -222,7 +222,7 @@ class AmazonPhotos:
         """
         initial = self.backoff(
             self.client.get,
-            f'{self.base}/drive/v1/search',
+            f'{self.base}/search',
             params={
                        "limit": MAX_LIMIT,
                        "offset": offset,
@@ -403,7 +403,7 @@ class AmazonPhotos:
         async def get(client: AsyncClient, node: str) -> None:
             logger.debug(f'Downloading {node}')
             try:
-                url = f'{self.base}/drive/v1/nodes/{node}/contentRedirection'
+                url = f'{self.base}/nodes/{node}/contentRedirection'
                 async with client.stream('GET', url, params=params) as r:
                     content_disposition = dict([y for x in r.headers['content-disposition'].split('; ') if len((y := x.split('='))) > 1])
                     fname = content_disposition['filename'].strip('"')
@@ -432,7 +432,7 @@ class AmazonPhotos:
         """
         initial = self.backoff(
             self.client.get,
-            f'{self.base}/drive/v1/trash',
+            f'{self.base}/trash',
             params={
                 'sort': "['modifiedDate DESC']",
                 'limit': MAX_LIMIT,
@@ -470,7 +470,7 @@ class AmazonPhotos:
 
         async def patch(client: AsyncClient, ids: list[str]) -> Response:
             return await client.patch(
-                f'{self.base}/drive/v1/trash',
+                f'{self.base}/trash',
                 json={
                     'recurse': 'true',
                     'op': 'add',
@@ -498,7 +498,7 @@ class AmazonPhotos:
             node_ids = node_ids.tolist()
 
         return self.client.patch(
-            f'{self.base}/drive/v1/trash',
+            f'{self.base}/trash',
             json={
                 'recurse': 'true',
                 'op': 'remove',
@@ -522,7 +522,7 @@ class AmazonPhotos:
 
         async def post(client: AsyncClient, ids: list[str]) -> Response:
             return await client.post(
-                f'{self.base}/drive/v1/bulk/nodes/purge',
+                f'{self.base}/bulk/nodes/purge',
                 json={
                     'recurse': 'false',
                     'nodeIds': ids,
@@ -546,7 +546,7 @@ class AmazonPhotos:
         if category == 'all':
             r = self.backoff(
                 self.client.get,
-                f'{self.base}/drive/v1/search',
+                f'{self.base}/search',
                 params={
                            'limit': 1,  # don't care about media info, just want aggregations
                            'lowResThumbnail': 'true',
@@ -568,7 +568,7 @@ class AmazonPhotos:
 
         r = self.backoff(
             self.client.get,
-            f'{self.base}/drive/v1/search/aggregation',
+            f'{self.base}/search/aggregation',
             params={
                 'aggregationContext': 'all',
                 'category': category,
@@ -597,7 +597,7 @@ class AmazonPhotos:
             node_ids = node_ids.tolist()
 
         async def patch(client: AsyncClient, node_id: str) -> dict:
-            r = await client.patch(f'{self.base}/drive/v1/nodes/{node_id}', json={
+            r = await client.patch(f'{self.base}/nodes/{node_id}', json={
                 'settings': {
                     'favorite': True,
                 },
@@ -621,7 +621,7 @@ class AmazonPhotos:
             node_ids = node_ids.tolist()
 
         async def patch(client: AsyncClient, node_id: str) -> dict:
-            r = await client.patch(f'{self.base}/drive/v1/nodes/{node_id}', json={
+            r = await client.patch(f'{self.base}/nodes/{node_id}', json={
                 'settings': {
                     'favorite': False,
                 },
@@ -645,7 +645,7 @@ class AmazonPhotos:
         if isinstance(node_ids, pd.Series):
             node_ids = node_ids.tolist()
 
-        r = self.client.post(f'{self.base}/drive/v1/nodes', json={
+        r = self.client.post(f'{self.base}/nodes', json={
             'kind': 'VISUAL_COLLECTION',
             'name': album_name,
             'resourceVersion': 'V2',
@@ -654,7 +654,7 @@ class AmazonPhotos:
         created_album = r.json()
         album_id = created_album['id']
         self.client.patch(
-            f'{self.base}/drive/v1/nodes/{album_id}/children',
+            f'{self.base}/nodes/{album_id}/children',
             json={
                 'op': 'add',
                 'value': node_ids,
@@ -673,7 +673,7 @@ class AmazonPhotos:
         @return: operation response
         """
         return self.client.patch(
-            f'{self.base}/drive/v1/nodes/{album_id}',
+            f'{self.base}/nodes/{album_id}',
             json={
                 'name': name,
                 'resourceVersion': 'V2',
@@ -694,7 +694,7 @@ class AmazonPhotos:
             node_ids = node_ids.tolist()
 
         return self.client.patch(
-            f'{self.base}/drive/v1/nodes/{album_id}/children',
+            f'{self.base}/nodes/{album_id}/children',
             json={
                 'op': 'add',
                 'value': node_ids,
@@ -716,7 +716,7 @@ class AmazonPhotos:
             node_ids = node_ids.tolist()
 
         return self.client.patch(
-            f'{self.base}/drive/v1/nodes/{album_id}/children',
+            f'{self.base}/nodes/{album_id}/children',
             json={
                 'op': 'remove',
                 'value': node_ids,
@@ -738,7 +738,7 @@ class AmazonPhotos:
 
         async def patch(client: AsyncClient, node_id: str) -> dict:
             r = await client.patch(
-                f'{self.base}/drive/v1/nodes/{node_id}',
+                f'{self.base}/nodes/{node_id}',
                 json={
                     'settings': {
                         'hidden': True,
@@ -765,7 +765,7 @@ class AmazonPhotos:
 
         async def patch(client: AsyncClient, node_id: str) -> dict:
             r = await client.patch(
-                f'{self.base}/drive/v1/nodes/{node_id}',
+                f'{self.base}/nodes/{node_id}',
                 json={
                     'settings': {
                         'hidden': False,
@@ -789,7 +789,7 @@ class AmazonPhotos:
         @param name: new name
         @return: operation response
         """
-        return self.client.put(f'{self.base}/drive/v1/cluster/name', json={
+        return self.client.put(f'{self.base}/cluster/name', json={
             'sourceCluster': cluster_id,
             'newName': name,
             'context': 'customer',
@@ -811,7 +811,7 @@ class AmazonPhotos:
         if isinstance(cluster_ids, pd.Series):
             cluster_ids = cluster_ids.tolist()
 
-        return self.client.post(f'{self.base}/drive/v1/cluster', json={
+        return self.client.post(f'{self.base}/cluster', json={
             'clusterIds': cluster_ids,
             'newName': name,
             'context': 'customer',
@@ -828,7 +828,7 @@ class AmazonPhotos:
         @return: operation response
         """
         return self.client.put(
-            f'{self.base}/drive/v1/cluster/hero/{cluster_id}',
+            f'{self.base}/cluster/hero/{cluster_id}',
             json={
                 'clusterId': cluster_id,
                 'nodeId': node_id,
@@ -849,7 +849,7 @@ class AmazonPhotos:
             node_ids = node_ids.tolist()
 
         return self.client.post(
-            f'{self.base}/drive/v1/familyArchive/', json={
+            f'{self.base}/familyArchive/', json={
                 'nodesToAdd': node_ids,
                 'nodesToRemove': [],
                 'familyId': family_id,
@@ -870,7 +870,7 @@ class AmazonPhotos:
             node_ids = node_ids.tolist()
 
         return self.client.post(
-            f'{self.base}/drive/v1/familyArchive/', json={
+            f'{self.base}/familyArchive/', json={
                 'nodesToAdd': [],
                 'nodesToRemove': node_ids,
                 'familyId': family_id,
@@ -890,7 +890,7 @@ class AmazonPhotos:
         """
         r = await self.async_backoff(
             client.get,
-            f'{self.base}/drive/v1/nodes',
+            f'{self.base}/nodes',
             params={
                        'limit': limit,
                        'sort': "['modifiedDate DESC']",
@@ -916,7 +916,7 @@ class AmazonPhotos:
         """
         initial = self.backoff(
             self.client.get,
-            f'{self.base}/drive/v1/nodes',
+            f'{self.base}/nodes',
             params={
                        'limit': MAX_LIMIT,
                        'offset': offset,
@@ -967,7 +967,7 @@ class AmazonPhotos:
         if x := self.get_cache('root'):
             return x
 
-        r = self.backoff(self.client.get, f'{self.base}/drive/v1/nodes', params={'filters': 'isRoot:true'} | self.base_params)
+        r = self.backoff(self.client.get, f'{self.base}/nodes', params={'filters': 'isRoot:true'} | self.base_params)
         root = r.json()['data'][0]
         logger.debug(f'Got root node: {root}')
 
@@ -977,7 +977,7 @@ class AmazonPhotos:
     def get_folders(self, folder_id: str = None) -> list[dict]:
 
         def _get(id: str) -> list[dict]:
-            url = f'https://www.amazon.ca/drive/v1/nodes/{id}/children'
+            url = f'{self.base}/nodes/{id}/children'
             params = {'filters': 'kind:FOLDER'} | self.base_params
             r = self.backoff(self.client.get, url, params=params)
             return r.json()['data']
@@ -1010,7 +1010,7 @@ class AmazonPhotos:
         def _mkdir(parent_id: str, name: str):
             r = self.backoff(
                 self.client.post,
-                'https://www.amazon.ca/drive/v1/nodes',
+                f'{self.base}/nodes',
                 json={"kind": "FOLDER", "name": name, "parents": [parent_id], "resourceVersion": "V2", "ContentType": "JSON"},
             )
             if debug:
@@ -1056,6 +1056,7 @@ class AmazonPhotos:
         return at
 
     def refresh_db(self) -> pd.DataFrame:
+        logger.info(f'Refreshing db `{self.db_path}`')
         now = datetime.now()
         y, m, d = f'timeYear:({now.year})', f'timeMonth:({now.month})', f'timeDay:({now.day})'
         ap_today = self.query(f'type:(PHOTOS OR VIDEOS) AND {y} AND {m} AND {d}')
