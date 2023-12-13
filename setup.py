@@ -66,7 +66,8 @@ setup(
             "session-id": ...,
             "ubid-acbca": ...,
             "at-acbca": ...,
-        }
+        },
+        db_path="ap.parquet",  # initialize a simple database to store results
     )
     
     # sanity check, verify authenticated endpoint can be reached
@@ -114,7 +115,6 @@ setup(
     ## Examples
     
     ```python
-    from pathlib import Path
     from amazon_photos import AmazonPhotos
     
     ## e.g. using cookies dict
@@ -134,8 +134,7 @@ setup(
     nodes = ap.query("type:(PHOTOS OR VIDEOS)")
     
     # query Amazon Photos library with more filters applied. (default save to `ap.parquet`)
-    nodes = ap.query(
-        "type:(PHOTOS OR VIDEOS) AND things:(plant AND beach OR moon) AND timeYear:(2023) AND timeMonth:(8) AND timeDay:(14) AND location:(CAN#BC#Vancouver)")
+    nodes = ap.query("type:(PHOTOS OR VIDEOS) AND things:(plant AND beach OR moon) AND timeYear:(2023) AND timeMonth:(8) AND timeDay:(14) AND location:(CAN#BC#Vancouver)")
     
     # sample first 10 nodes
     node_ids = nodes.id[:10]
@@ -152,9 +151,8 @@ setup(
     # restore a batch of images/videos from the trash bin
     ap.restore(node_ids)
     
-    # upload a batch of images/videos
-    files = Path('path/to/files').iterdir()
-    ap.upload(files)
+    # upload media (preserves local directory structure and copies to Amazon Photos root directory)
+    ap.upload('path/to/files')
     
     # download a batch of images/videos
     ap.download(node_ids)
@@ -196,7 +194,6 @@ setup(
       download a zip file, then makes a request to that url to download the content.
       When making a request to download data for 1200 nodes (max batch size), it turns out to be much slower (~2.5 minutes)
       than asynchronously downloading 1200 photos/videos individually (~1 minute).
-
     '''),
     python_requires=">=3.10.10",
     long_description_content_type='text/markdown',

@@ -17,6 +17,7 @@ import orjson
 import pandas as pd
 from httpx import AsyncClient, Client, Response, Limits
 from tqdm.asyncio import tqdm_asyncio
+from datetime import datetime
 
 from .constants import *
 from .helpers import dump
@@ -55,19 +56,17 @@ logger = getLogger(list(Logger.manager.loggerDict)[-1])
 
 
 class AmazonPhotos:
-    def __init__(self, *, tld: str = None, cookies: dict = None):
+    def __init__(self, *, tld: str = None, cookies: dict = None, db_path: str = None, **kwargs):
         self.tld = tld or self.determine_tld(cookies)
         self.base = f'https://www.amazon.{self.tld}'
-        self.base_node_filters = {
+        self.base_params = {
             'asset': 'ALL',
-            'searchOnFamily': 'false',
             'tempLink': 'false',
-            'offset': 0,
             'resourceVersion': 'V2',
             'ContentType': 'JSON',
         }
         self.client = Client(
-            http2=True,
+            http2=False,  # todo: "Max outbound streams is 128, 128 open" errors with http2?
             follow_redirects=True,
             timeout=60,
             headers={
@@ -80,7 +79,10 @@ class AmazonPhotos:
                 'session-id': os.getenv('session_id'),
             }
         )
-        self.root, self.owner_id = self._get_root()
+        self.root = self.get_root()
+        self.folders = self.get_folders()
+        self.init_time = int(time.time_ns() // 1e6)
+        self.db = self.load_db(db_path, **kwargs)
 
     def determine_tld(self, cookies: dict) -> str:
         """
@@ -127,7 +129,7 @@ class AmazonPhotos:
 
                 if r.status_code == 401:  # BadAuthenticationData
                     logger.error(f'{r.status_code} {r.text}')
-                    logger.error(f'Cookies expired. Log-in to Amazon Photos and copy fresh cookies.')
+                    logger.error(f'Cookies expired. Log in to Amazon Photos and copy fresh cookies.')
                     sys.exit(1)
                 r.raise_for_status()
                 return r
@@ -152,7 +154,7 @@ class AmazonPhotos:
 
                 if r.status_code == 401:  # BadAuthenticationData
                     logger.error(f'{r.status_code} {r.text}')
-                    logger.error(f'Cookies expired. Log-in to Amazon Photos and copy fresh cookies.')
+                    logger.error(f'Cookies expired. Log in to Amazon Photos and copy fresh cookies.')
                     sys.exit(1)
 
                 r.raise_for_status()
@@ -206,17 +208,13 @@ class AmazonPhotos:
             client.get,
             f'{self.base}/drive/v1/search',
             params={
-                "limit": limit,
-                "offset": offset,
-                "asset": "ALL",
-                "filters": filters,
-                "lowResThumbnail": "true",
-                "searchContext": "customer",
-                "sort": "['createdDate DESC']",
-                "tempLink": "false",
-                "resourceVersion": "V2",
-                "ContentType": "JSON",
-            },
+                       "limit": limit,
+                       "offset": offset,
+                       "filters": filters,
+                       "lowResThumbnail": "true",
+                       "searchContext": "customer",
+                       "sort": "['createdDate DESC']",
+                   } | self.base_params,
         )
         return r.json()
 
@@ -235,17 +233,13 @@ class AmazonPhotos:
             self.client.get,
             f'{self.base}/drive/v1/search',
             params={
-                "limit": MAX_LIMIT,
-                "offset": offset,
-                "asset": "ALL",
-                "filters": filters,
-                "lowResThumbnail": "true",
-                "searchContext": "customer",
-                "sort": "['createdDate DESC']",
-                "tempLink": "false",
-                "resourceVersion": "V2",
-                "ContentType": "JSON",
-            },
+                       "limit": MAX_LIMIT,
+                       "offset": offset,
+                       "filters": filters,
+                       "lowResThumbnail": "true",
+                       "searchContext": "customer",
+                       "sort": "['createdDate DESC']",
+                   } | self.base_params,
         ).json()
         res = [initial]
         # small number of results, no need to paginate
@@ -264,38 +258,139 @@ class AmazonPhotos:
         """Convenience method to get all videos"""
         return self.query('type:(VIDEOS)', **kwargs)
 
-    def upload(self, files: list[Path | str] | Generator, chunk_size=64 * 1024, **kwargs) -> list[dict]:
+    def copy_tree(self, path):
+        dmap = {}
+
+        def helper(d: str | Path):
+            logger.debug(f'Creating Folder: {d}')
+            d = str(d)
+            if not self.find_folder(d):
+                folder_id, folder = self.create_folder(d)
+                dmap[d] = folder_id
+            else:
+                folder = self.find_folder(d)
+                dmap[d] = folder['id']
+
+        def copy_dir(src: str | Path):
+            helper(src)
+            for p in Path(src).iterdir():
+                if p.is_dir():
+                    copy_dir(p)
+
+        copy_dir(path)
+        return dmap
+
+    def dedup_files(self, folder_path: str):
+        files = []
+        dups = []
+        if self.db is not None:
+            md5s = set(self.db.md5)
+            for file in Path(folder_path).rglob('*'):
+                if file.is_file():
+                    if hashlib.md5(file.read_bytes()).hexdigest() not in md5s:
+                        files.append(file)
+                    else:
+                        dups.append(file)
+        else:
+            logger.warning('No database found. Checks for duplicate files will not be performed.')
+            files = list(Path(folder_path).rglob('*'))
+        logger.debug(f'{len(dups)} Duplicate files skipped')
+        return files
+
+    def upload(self, folder_path: str, chunk_size=64 * 1024, batch_size: int = 1000, refresh: bool = True, **kwargs) -> list[dict]:
+        """
+        Upload files to Amazon Photos
+
+        Copies folder structure to Amazon Photos and uploads files to their respective folders.
+
+        @param folder_path: path to directory containing files to upload
+        @param chunk_size: bytes to upload per chunk
+        @param batch_size: number of files to upload per batch
+        @return: upload results
+        """
+        files = self.dedup_files(folder_path)
+        dmap = self.copy_tree(folder_path)
+        dir_info = [(file, dmap[str(file.parent)]) for file in files]
+
         async def stream_bytes(file: Path) -> bytes:
             async with aiofiles.open(file, 'rb') as f:
                 while chunk := await f.read(chunk_size):
                     yield chunk
 
-        async def upload_file(client: AsyncClient, file: Path):
+        async def upload_file(client: AsyncClient, file: Path, pid: str, max_retries: int = 12, m: int = 20, b: int = 2):
             logger.debug(f'Upload start: {file.name}')
             file = Path(file) if isinstance(file, str) else file
             file_content = file.read_bytes()  # todo: not ideal, will refactor eventually
-            r = await client.post(
-                'https://content-na.drive.amazonaws.com/v2/upload',
-                data=stream_bytes(file),
-                params={
-                    'conflictResolution': 'RENAME',
-                    'fileSize': str(len(file_content)),
-                    'name': file.name,
-                    'parentNodeId': self.root,
-                },
-                headers={
-                    # 'x-amz-access-token':self.client.cookies['at-acbca'],
-                    'content-length': str(len(file_content)),
-                    'x-amzn-file-md5': hashlib.md5(file_content).hexdigest(),
-                }
-            )
+
+            ## self.async_backoff wont work, stream will already be consumed by the time it retries
+            # r = await client.post(
+            #     'https://content-na.drive.amazonaws.com/v2/upload',
+            #     data=stream_bytes(file),
+            #     params={
+            #         'conflictResolution': 'RENAME',
+            #         'fileSize': str(len(file_content)),
+            #         'name': file.name,
+            #         'parentNodeId': pid,
+            #     },
+            #     headers={
+            #         # 'x-amz-access-token':self.client.cookies['at-acbXX'],
+            #         'content-length': str(len(file_content)),
+            #         'x-amzn-file-md5': hashlib.md5(file_content).hexdigest(),
+            #     }
+            # )
+
+            for i in range(max_retries + 1):
+                try:
+                    r = await client.post(
+                        'https://content-na.drive.amazonaws.com/v2/upload',
+                        data=stream_bytes(file),
+                        params={
+                            'conflictResolution': 'RENAME',
+                            'fileSize': str(len(file_content)),
+                            'name': file.name,
+                            'parentNodeId': pid,
+                        },
+                        headers={
+                            # 'x-amz-access-token':self.client.cookies['at-acbXX'],
+                            'content-length': str(len(file_content)),
+                            'x-amzn-file-md5': hashlib.md5(file_content).hexdigest(),
+                        }
+                    )
+                    if r.status_code == 409:  # conflict
+                        logger.debug(f'{r.status_code} {r.text}')
+                        break
+                    if r.status_code == 401:  # BadAuthenticationData
+                        logger.error(f'{r.status_code} {r.text}')
+                        logger.error(f'Cookies expired. Log in to Amazon Photos and copy fresh cookies.')
+                        sys.exit(1)
+                    r.raise_for_status()
+                    break
+                except Exception as e:
+                    if i == max_retries:
+                        logger.warning(f'Max retries exceeded\n{e}')
+                        data = r.json()
+                        logger.error(f'Upload failed: {file.name}\t{data = }\t{r.status_code = }\t{dict(r.headers)}')
+                        break
+                    t = min(random.random() * (b ** i), m)
+                    logger.debug(f'Retrying in {f"{t:.2f}"} seconds\t\t{e}')
+                    await asyncio.sleep(t)
+
             data = r.json()
-            logger.debug(f'Upload complete: {file.name}')
-            logger.debug(f'{data = }')
+            logger.debug(f'Upload success: {file.name}\t{data = }\t{r.status_code = }\t{dict(r.headers)}')
             return data
 
-        fns = (partial(upload_file, file=file) for file in files)
-        return asyncio.run(self.process(fns, desc='Uploading Files', **kwargs))
+        batches = [dir_info[i:i + batch_size] for i in range(0, len(dir_info), batch_size)]
+        logger.debug(f'Uploading {len(dir_info)} files from {folder_path}')
+        res = []
+        for i, batch in enumerate(batches):
+            fns = (partial(upload_file, file=file, pid=pid) for file, pid in batch)
+            upload_results = asyncio.run(self.process(fns, desc='Uploading Files', **kwargs))
+            res.append({'batch': i, 'results': upload_results})
+
+        if refresh:
+            # refresh db after upload. finest granularity query filters support is timeDay:(n)
+            self.refresh_db()
+        return res
 
     def download(self, node_ids: list[str] | pd.Series, out: str = 'media', chunk_size: int = None, **kwargs) -> dict:
         """
@@ -312,7 +407,7 @@ class AmazonPhotos:
         out.mkdir(parents=True, exist_ok=True)
         params = {
             'querySuffix': '?download=true',
-            'ownerId': self.owner_id,
+            'ownerId': self.root['ownerId'],
         }
 
         async def get(client: AsyncClient, node: str) -> None:
@@ -320,8 +415,7 @@ class AmazonPhotos:
             try:
                 url = f'{self.base}/drive/v1/nodes/{node}/contentRedirection'
                 async with client.stream('GET', url, params=params) as r:
-                    content_disposition = dict(
-                        [y for x in r.headers['content-disposition'].split('; ') if len((y := x.split('='))) > 1])
+                    content_disposition = dict([y for x in r.headers['content-disposition'].split('; ') if len((y := x.split('='))) > 1])
                     fname = content_disposition['filename'].strip('"')
                     async with aiofiles.open(out / f"{node}_{fname}", 'wb') as fp:
                         async for chunk in r.aiter_bytes(chunk_size):
@@ -373,9 +467,9 @@ class AmazonPhotos:
         res.extend(asyncio.run(self.process(fns, desc='getting trashed media', **kwargs)))
         return dump(as_df, res, out)
 
-    def trash(self, node_ids: list[str] | pd.Series, **kwargs) -> list[dict]:
+    def trash(self, node_ids: list[str] | pd.Series, filters: str = '', **kwargs) -> list[dict]:
         """
-        Move media to trash bin
+        Move media or entire folders to trash bin
 
         @param node_ids: list of media ids to trash
         @return: the trash response
@@ -390,6 +484,7 @@ class AmazonPhotos:
                 json={
                     'recurse': 'true',
                     'op': 'add',
+                    'filters': filters,
                     'conflictResolution': 'RENAME',
                     'value': ids,
                     'resourceVersion': 'V2',
@@ -463,14 +558,11 @@ class AmazonPhotos:
                 self.client.get,
                 f'{self.base}/drive/v1/search',
                 params={
-                    'asset': 'ALL',
-                    'limit': 1,  # don't care about media info, just want aggregations
-                    'lowResThumbnail': 'true',
-                    'searchContext': 'all',
-                    'tempLink': 'false',
-                    'groupByForTime': 'year',
-                    'resourceVersion': 'V2',
-                })
+                           'limit': 1,  # don't care about media info, just want aggregations
+                           'lowResThumbnail': 'true',
+                           'searchContext': 'all',
+                           'groupByForTime': 'year',
+                       } | self.base_params)
             data = r.json()['aggregations']
             if out:
                 _out = Path(out)
@@ -810,21 +902,17 @@ class AmazonPhotos:
             client.get,
             f'{self.base}/drive/v1/nodes',
             params={
-                'asset': 'ALL',
-                'tempLink': 'false',
-                'limit': limit,
-                'sort': "['modifiedDate DESC']",
-                'filters': filters,
-                'lowResThumbnail': 'true',
-                'offset': offset,
-                'resourceVersion': 'V2',
-                'ContentType': 'JSON',
-                '_': int(time.time_ns() // 1e6)
-            },
+                       'limit': limit,
+                       'sort': "['modifiedDate DESC']",
+                       'filters': filters,
+                       'lowResThumbnail': 'true',
+                       'offset': offset,
+                       '_': int(time.time_ns() // 1e6),
+                   } | self.base_params,
         )
         return r.json()
 
-    def __nodes_head(self, filters: str = '', offset: int = 0, limit: int = MAX_LIMIT, out: str = 'nodes.json', **kwargs) -> list[dict]:
+    def _nodes_head(self, filters: str = '', offset: int = 0, limit: int = MAX_LIMIT, **kwargs) -> list[dict]:
         """
         Get first 9999 Amazon Photos nodes
 
@@ -840,17 +928,13 @@ class AmazonPhotos:
             self.client.get,
             f'{self.base}/drive/v1/nodes',
             params={
-                'limit': MAX_LIMIT,
-                'offset': offset,
-                'asset': 'ALL',
-                'tempLink': 'false',
-                'sort': "['modifiedDate DESC']",
-                'filters': filters,
-                'lowResThumbnail': 'true',
-                'resourceVersion': 'V2',
-                'ContentType': 'JSON',
-                '_': int(time.time_ns() // 1e6)
-            },
+                       'limit': MAX_LIMIT,
+                       'offset': offset,
+                       'sort': "['modifiedDate DESC']",
+                       'filters': filters,
+                       'lowResThumbnail': 'true',
+                       '_': int(time.time_ns() // 1e6),
+                   } | self.base_params,
         ).json()
 
         res = [initial]
@@ -867,25 +951,121 @@ class AmazonPhotos:
             # offsets = [i for i in range(0, initial['count'], limit)]
             offsets = range(offset, min(initial['count'], limit), MAX_LIMIT)
         fns = (partial(self._nodes, offset=o, filters=filters, limit=MAX_LIMIT) for o in offsets)
-        res.extend(asyncio.run(self.process(fns, desc='getting media', **kwargs)))
-        # save to disk
-        _out = Path(out)
-        _out.parent.mkdir(parents=True, exist_ok=True)
-        _out.write_bytes(orjson.dumps(res))
+        res.extend(asyncio.run(self.process(fns, desc='Getting Nodes', **kwargs)))
         return res
 
-    def _get_folder(self, node_id: str, folder_name: str) -> tuple[str, str]:
-        r = self.backoff(
-            self.client.get,
-            f'https://www.amazon.ca/drive/v1/nodes/{node_id}/children',
-            params={'filters': f'kind:FOLDER AND status:(AVAILABLE*) AND name:"{folder_name}"'} | self.base_node_filters
-        )
-        data = r.json()['data'][0]
-        return data['id'], data['ownerId']
+    def get_root(self) -> dict:
+        """
+        isRoot:true filter is sketchy, can add extra data and request is still valid.
+        seems like only check is something like: `if(data.contains("true"))`
+        """
+        r = self.backoff(self.client.get, f'{self.base}/drive/v1/nodes', params={'filters': 'isRoot:true'} | self.base_params)
+        return r.json()['data'][0]
 
-    def _get_root(self) -> tuple[str, str]:
-        r = self.backoff(self.client.get, f'{self.base}/drive/v1/nodes', params={'filters': 'isRoot:true'} | self.base_node_filters)
-        nid = r.json()['data'][0]['id']
-        nid, _ = self._get_folder(nid, 'Pictures')
-        root, owner = self._get_folder(nid, 'Web')
-        return root, owner
+    def get_folders(self, folder_id: str = None, debug: int = 0):
+
+        def _get(id: str) -> list[dict]:
+            url = f'https://www.amazon.ca/drive/v1/nodes/{id}/children'
+            params = {'filters': 'kind:FOLDER'} | self.base_params
+            r = self.backoff(self.client.get, url, params=params)
+            return r.json()['data']
+
+        def helper(folder: dict) -> dict:
+            if debug:
+                logger.debug(f'Scanning {folder["name"]}')
+            data = folder | {'children': []}
+            folders = _get(folder['id'])
+            for sub in folders:
+                data['children'].append(helper(sub))
+            return data
+
+        return [helper(node) for node in _get(folder_id or self.root['id'])]
+
+    def find_folder(self, path: str):
+        def helper(curr: list[dict], remaining: list[str]) -> dict | list[dict]:
+            for folder in curr:
+                if folder['name'] == remaining[0]:
+                    if len(remaining) == 1:
+                        return folder['children'] if path.endswith('/') else folder
+                    return helper(folder['children'], remaining[1:])
+
+        return helper(self.folders, path.strip('/').split('/'))
+
+    def create_folder(self, path: str, debug: int = 0):
+        def _mkdir(parent_id: str, name: str):
+            r = self.backoff(
+                self.client.post,
+                'https://www.amazon.ca/drive/v1/nodes',
+                json={"kind": "FOLDER", "name": name, "parents": [parent_id], "resourceVersion": "V2", "ContentType": "JSON"},
+            )
+            if debug:
+                logger.debug(f"created new folder {name = } under {parent_id = }")
+            # takes a moment for amazon to process folder creation,
+            # we keep going, if server returns 409
+            # we get the node id in the error message anyways, so we use that
+            return r.json().get('id') or r.json().get('info', {}).get('nodeId')
+
+        tmp = ''
+        parent = None
+        parts = []
+        # look for existing folder structure
+        for p in filter(len, path.split('/')):
+            tmp = os.path.join(tmp, p)
+            if folder := self.find_folder(tmp):
+                parent = folder.get('id')
+            else:
+                parts.append(p)
+
+        parent = parent or self.root['id']
+        for part in parts:
+            try:
+                parent = _mkdir(parent, part)
+            except Exception as e:
+                logger.error(f'Folder creation failed: {part}\t{e}')
+                # only retry once, no fancy retry logic
+                parent = _mkdir(parent, part)
+
+        # todo: doesn't immediately register folder? time needed for server processing?
+        self.folders = self.get_folders()
+        folder = self.find_folder(path)
+        return parent, folder
+
+    def refresh_db(self) -> pd.DataFrame:
+        now = datetime.now()
+        y, m, d = f'timeYear:({now.year})', f'timeMonth:({now.month})', f'timeDay:({now.day})'
+        self.query(f'type:(PHOTOS OR VIDEOS) AND {y} AND {m} AND {d}', out="ap_today.parquet")
+        y, m, d = f'timeYear:({now.year})', f'timeMonth:({now.month})', f'timeDay:({now.day + 1})'
+        self.query(f'type:(PHOTOS OR VIDEOS) AND {y} AND {m} AND {d}', out="ap_tomorrow.parquet")
+        db = (
+            pd.concat(pd.read_parquet(f'{x}.parquet') for x in ['ap_tomorrow', 'ap_today', 'ap'])
+            .drop_duplicates('id')
+            .reset_index(drop=True)
+        )
+        [Path(p).unlink() for p in ['ap_tomorrow.parquet', 'ap_today.parquet']]
+        db.to_parquet('ap.parquet')
+        self.db = db
+        return db
+
+    def __at(self):
+        r = self.client.get(
+            'https://www.amazon.ca/photos/auth/token',
+            params={'_': int(time.time_ns() // 1e6)},
+        )
+        at = r.json()['access_token']
+        # todo: does not work, investigate later
+        # self.client.cookies.update({'at-acb': at})
+        return at
+
+    def load_db(self, db_path: str, **kwargs):
+        df = None
+        if Path(db_path).exists():
+            try:
+                df = pd.read_parquet(db_path, **kwargs)
+            except Exception as e:
+                logger.warning(f'Failed to load {db_path}\t{e}')
+        else:
+            logger.warning(f'Database `{db_path}` not found, initializing new database')
+            df = self.query()
+            Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+            df.to_parquet(db_path)
+        return df

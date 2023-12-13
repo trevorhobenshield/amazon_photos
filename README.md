@@ -41,7 +41,8 @@ ap = AmazonPhotos(
         "session-id": ...,
         "ubid-acbca": ...,
         "at-acbca": ...,
-    }
+    },
+    db_path="ap.parquet",  # initialize a simple database to store results
 )
 
 # sanity check, verify authenticated endpoint can be reached
@@ -89,7 +90,6 @@ AND favorite:(true)
 ## Examples
 
 ```python
-from pathlib import Path
 from amazon_photos import AmazonPhotos
 
 ## e.g. using cookies dict
@@ -109,8 +109,7 @@ ap.usage()
 nodes = ap.query("type:(PHOTOS OR VIDEOS)")
 
 # query Amazon Photos library with more filters applied. (default save to `ap.parquet`)
-nodes = ap.query(
-    "type:(PHOTOS OR VIDEOS) AND things:(plant AND beach OR moon) AND timeYear:(2023) AND timeMonth:(8) AND timeDay:(14) AND location:(CAN#BC#Vancouver)")
+nodes = ap.query("type:(PHOTOS OR VIDEOS) AND things:(plant AND beach OR moon) AND timeYear:(2023) AND timeMonth:(8) AND timeDay:(14) AND location:(CAN#BC#Vancouver)")
 
 # sample first 10 nodes
 node_ids = nodes.id[:10]
@@ -127,9 +126,8 @@ ap.delete(node_ids)
 # restore a batch of images/videos from the trash bin
 ap.restore(node_ids)
 
-# upload a batch of images/videos
-files = Path('path/to/files').iterdir()
-ap.upload(files)
+# upload media (preserves local directory structure and copies to Amazon Photos root directory)
+ap.upload('path/to/files')
 
 # download a batch of images/videos
 ap.download(node_ids)
