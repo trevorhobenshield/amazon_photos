@@ -1039,11 +1039,11 @@ class AmazonPhotos:
 
     def load_db(self, db_path: str, **kwargs):
         df = None
-        if Path(db_path).exists():
+        if db_path and Path(db_path).exists():
             try:
                 df = pd.read_parquet(db_path, **kwargs)
             except Exception as e:
-                logger.warning(f'Failed to load {db_path}\t{e}')
+                logger.warning(f'Failed to load db `{db_path}`\t{e}')
         else:
             logger.warning(f'Database `{db_path}` not found, initializing new database')
             df = self.query()
