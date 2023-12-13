@@ -1040,7 +1040,7 @@ class AmazonPhotos:
         self.query(f'type:(PHOTOS OR VIDEOS) AND {y} AND {m} AND {d}', out=tomorrow)
         try:
             db = (
-                pd.concat([self.db] + [df for x in [today, tomorrow] if not (df := pd.read_parquet(x)).empty], axis=1)
+                pd.concat([self.db] + [df for x in [today, tomorrow] if not (df := pd.read_parquet(x)).empty])
                 .drop_duplicates('id')
                 .reset_index(drop=True)
             )
