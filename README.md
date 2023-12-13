@@ -7,16 +7,16 @@
 - [Query Syntax](#query-syntax)
 - [Examples](#examples)
 
+> It is recommended to use this API in a [Jupyter Notebook](https://jupyter.org/install), as the results from most endpoints
+> are a [DataFrame](https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.html#pandas.DataFrame)
+> which can be neatly displayed in a notebook, and efficiently manipulated with vectorized operations. This becomes
+> increasingly important when dealing with large quantities of data.
+
 ## Installation
 
 ```bash
 pip install amazon-photos
 ```
-
-> It is recommended to use this API in a [Jupyter Notebook](https://jupyter.org/install), as the results from most endpoints
-> are a [DataFrame](https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.html#pandas.DataFrame)
-> which can be neatly displayed in a notebook, and efficiently manipulated with vectorized operations. This becomes
-> increasingly important when dealing with large quantities of data.
 
 ## Setup
 
@@ -38,11 +38,13 @@ from amazon_photos import AmazonPhotos
 
 ap = AmazonPhotos(
     cookies={
-        "session-id": ...,
-        "ubid-acbca": ...,
-        "at-acbca": ...,
+        'ubid-acbca':...,
+        'at-acbca': ...,
+        'session-id': ...,
     },
-    db_path="ap.parquet",  # initialize a simple database to store results
+    # optionally cache directory tree 
+    cache_path='ap.cache',
+    use_cache=True,
 )
 
 # sanity check, verify authenticated endpoint can be reached
@@ -89,15 +91,22 @@ AND favorite:(true)
 
 ## Examples
 
+> A database named `ap.parquet` will be created during the initial setup. This is mainly used to reduce 409 errors (upload conflicts) by checking your local file(s) md5 against the database before sending the request.
+
 ```python
 from amazon_photos import AmazonPhotos
 
 ## e.g. using cookies dict
-ap = AmazonPhotos(cookies={
-    "at-acbca": ...,
-    "ubid-acbca": ...,
-    "session-id": ...,
-})
+ap = AmazonPhotos(
+    cookies={
+        'ubid-acbca':...,
+        'at-acbca': ...,
+        'session-id': ...,
+    },
+    # optionally cache directory tree 
+    cache_path='ap.cache',
+    use_cache=True,
+)
 
 ## e.g. using env variables and specifying tld. E.g. amazon.ca (Canada)
 # ap = AmazonPhotos(tld="ca")

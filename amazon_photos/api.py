@@ -68,7 +68,7 @@ class AmazonPhotos:
             }
         )
         self.use_cache = kwargs.pop('use_cache', False)
-        self.db_path = Path(kwargs.pop('db_path', ''))
+        self.db_path = Path(kwargs.pop('db_path', 'ap.parquet'))
         self.cache_path = Path(kwargs.pop('cache_path', ''))
         self.cache = self.load_cache()
         self.root = self.get_root()
@@ -377,6 +377,9 @@ class AmazonPhotos:
             fns = (partial(upload_file, file=file, pid=pid) for file, pid in batch)
             upload_results = asyncio.run(self.process(fns, desc='Uploading Files', **kwargs))
             res.append({'batch': i, 'results': upload_results})
+
+        if refresh:
+            self.refresh_db()
         return res
 
     def download(self, node_ids: list[str] | pd.Series, out: str = 'media', chunk_size: int = None, **kwargs) -> dict:
@@ -1086,7 +1089,7 @@ class AmazonPhotos:
         date_cols |= {f'video.{x}' for x in date_cols}
         valid_date_cols = list(date_cols & set(df.columns))
         df[valid_date_cols] = df[valid_date_cols].apply(pd.to_datetime, format='%Y-%m-%dT%H:%M:%S.%fZ', errors='coerce')
-        df.to_parquet('self.parquet')
+        df.to_parquet(self.db_path)
         return df
 
     def load_cache(self) -> dict:
