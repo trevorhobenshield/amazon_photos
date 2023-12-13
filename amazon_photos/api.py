@@ -1090,6 +1090,7 @@ class AmazonPhotos:
         valid_date_cols = list(date_cols & set(df.columns))
         df[valid_date_cols] = df[valid_date_cols].apply(pd.to_datetime, format='%Y-%m-%dT%H:%M:%S.%fZ', errors='coerce')
         df.to_parquet(self.db_path)
+        self.db = df
         return df
 
     def load_cache(self) -> dict:
