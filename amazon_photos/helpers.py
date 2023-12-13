@@ -34,6 +34,8 @@ def parse_media(media: any, out: str) -> pd.DataFrame:
         'VideoThumbnailTimestamps',
         'VideoTranscodeTimestamps',
     }
+    date_cols |= {f'image.{x}' for x in date_cols}
+    date_cols |= {f'video.{x}' for x in date_cols}
     valid_date_cols = list(date_cols & set(df.columns))
     df[valid_date_cols] = df[valid_date_cols].apply(pd.to_datetime, format='%Y-%m-%dT%H:%M:%S.%fZ', errors='coerce')
     suffix = Path(out).suffix

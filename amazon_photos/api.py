@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Generator
 
 import aiofiles
+import numpy as np
 import orjson
 import pandas as pd
 from httpx import AsyncClient, Client, Response, Limits
@@ -56,7 +57,7 @@ logger = getLogger(list(Logger.manager.loggerDict)[-1])
 
 
 class AmazonPhotos:
-    def __init__(self, *, tld: str = None, cookies: dict = None, db_path: str = None, **kwargs):
+    def __init__(self, *, tld: str = None, cookies: dict = None, db_path: str = '', **kwargs):
         self.tld = tld or self.determine_tld(cookies)
         self.base = f'https://www.amazon.{self.tld}'
         self.base_params = {
@@ -1048,4 +1049,41 @@ class AmazonPhotos:
             df = self.query()
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
             df.to_parquet(db_path)
+        return df
+
+    def refresh_db(self) -> pd.DataFrame:
+        now = datetime.now()
+        y, m, d = f'timeYear:({now.year})', f'timeMonth:({now.month})', f'timeDay:({now.day})'
+        ap_today = self.query(f'type:(PHOTOS OR VIDEOS) AND {y} AND {m} AND {d}')
+        y, m, d = f'timeYear:({now.year})', f'timeMonth:({now.month})', f'timeDay:({now.day + 1})'
+        ap_tomorrow = self.query(f'type:(PHOTOS OR VIDEOS) AND {y} AND {m} AND {d}')
+
+        cols = set(ap_today.columns) | set(ap_tomorrow.columns) | set(self.db.columns)
+
+        # disgusting
+        obj_dtype = np.dtypes.ObjectDType()
+        df = pd.concat([
+            ap_today.reindex(columns=cols).astype(obj_dtype),
+            ap_tomorrow.reindex(columns=cols).astype(obj_dtype),
+            self.db.reindex(columns=cols).astype(obj_dtype),
+        ]).drop_duplicates('id').reset_index(drop=True)
+
+        date_cols = {
+            'contentDate',
+            'createdDate',
+            'creationDate',
+            'dateTime',
+            'dateTimeDigitized',
+            'dateTimeOriginal',
+            'modifiedDate',
+            'ProcessingTimestamp',
+            'VideoMetadataTimestamps',
+            'VideoThumbnailTimestamps',
+            'VideoTranscodeTimestamps',
+        }
+        date_cols |= {f'image.{x}' for x in date_cols}
+        date_cols |= {f'video.{x}' for x in date_cols}
+        valid_date_cols = list(date_cols & set(df.columns))
+        df[valid_date_cols] = df[valid_date_cols].apply(pd.to_datetime, format='%Y-%m-%dT%H:%M:%S.%fZ', errors='coerce')
+        df.to_parquet('self.parquet')
         return df
