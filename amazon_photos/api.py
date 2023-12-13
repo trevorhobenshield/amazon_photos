@@ -386,10 +386,6 @@ class AmazonPhotos:
             fns = (partial(upload_file, file=file, pid=pid) for file, pid in batch)
             upload_results = asyncio.run(self.process(fns, desc='Uploading Files', **kwargs))
             res.append({'batch': i, 'results': upload_results})
-
-        if refresh:
-            # refresh db after upload. finest granularity query filters support is timeDay:(n)
-            self.refresh_db()
         return res
 
     def download(self, node_ids: list[str] | pd.Series, out: str = 'media', chunk_size: int = None, **kwargs) -> dict:
@@ -1029,27 +1025,6 @@ class AmazonPhotos:
         self.folders = self.get_folders()
         folder = self.find_folder(path)
         return parent, folder
-
-    def refresh_db(self) -> pd.DataFrame:
-        # handle timezone differences with server
-        today, tomorrow = 'ap_today.parquet', 'ap_tomorrow.parquet'
-        now = datetime.now()
-        y, m, d = f'timeYear:({now.year})', f'timeMonth:({now.month})', f'timeDay:({now.day})'
-        self.query(f'type:(PHOTOS OR VIDEOS) AND {y} AND {m} AND {d}', out=today)
-        y, m, d = f'timeYear:({now.year})', f'timeMonth:({now.month})', f'timeDay:({now.day + 1})'
-        self.query(f'type:(PHOTOS OR VIDEOS) AND {y} AND {m} AND {d}', out=tomorrow)
-        try:
-            db = (
-                pd.concat([self.db] + [df for x in [today, tomorrow] if not (df := pd.read_parquet(x)).empty], axis=1)
-                .drop_duplicates('id')
-                .reset_index(drop=True)
-            )
-            [Path(p).unlink() for p in [today, tomorrow]]
-            db.to_parquet('ap.parquet')
-            self.db = db
-        except Exception as e:
-            logger.warning(f'Failed to refresh database\t{e}')
-        return self.db
 
     def __at(self):
         r = self.client.get(
