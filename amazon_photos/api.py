@@ -1113,20 +1113,12 @@ class AmazonPhotos:
         )
         return r.json()
 
-    def nodes(self, filters: list[str], sort: list[str] = None, limit: int = MAX_LIMIT, offset: int = 0, **kwargs) -> list[dict]:
+    def nodes(self, filters: list[str], sort: list[str] = None, limit: int = MAX_LIMIT, offset: int = 0, **kwargs) -> pd.DataFrame:
         """
-        Get first 9999 Amazon Photos nodes
+        Get first 9999 Amazon Drive nodes
 
         **Note**: Amazon restricts API access to first 9999 nodes. error: "Offset + limit cannot be greater than 9999"
         startToken/endToken are no longer returned, so we can't use them to paginate.
-
-        E.g.
-        filters = [
-            'kind: FILE',
-            'modifiedDate: [2023-12-13T21:28:35.343Z  TO  2023-12-13T21:28:36.343Z]',
-            'name: data_batch_3*',  # => startswith()
-        ]
-        sort = ['name ASC', 'modifiedDate DESC']
         """
         filters = ' AND '.join(filters) if filters else ''
         sort = str(sort) if sort else ''
@@ -1143,7 +1135,7 @@ class AmazonPhotos:
         res = [initial]
         # small number of results, no need to paginate
         if initial['count'] <= MAX_LIMIT:
-            return [initial]
+            return format_nodes(pd.json_normalize(initial['data']))
         # see AWS error: E.g. "Offset + limit cannot be greater than 9999"
         # offset must be 9799 + limit of 200
         if initial['count'] > MAX_NODES:
@@ -1152,4 +1144,8 @@ class AmazonPhotos:
             offsets = range(offset, min(initial['count'], limit), MAX_LIMIT)
         fns = (partial(self._nodes, offset=o, filters=filters, sort=sort, limit=limit) for o in offsets)
         res.extend(asyncio.run(self.process(fns, desc='Node Query', **kwargs)))
-        return res
+        return format_nodes(
+            pd.json_normalize(y for x in res for y in x.get('data', []))
+            .drop_duplicates('id')
+            .reset_index(drop=True)
+        )
