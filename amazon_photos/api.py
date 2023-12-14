@@ -1058,6 +1058,9 @@ class AmazonPhotos:
         return at
 
     def refresh_db(self) -> pd.DataFrame:
+        """
+        todo: may be able to use finegrained node Range Query instead? although results may be limited to 9999 most recent nodes?
+        """
         logger.info(f'Refreshing db `{self.db_path}`')
         now = datetime.now()
         y, m, d = f'timeYear:({now.year})', f'timeMonth:({now.month})', f'timeDay:({now.day})'
@@ -1094,12 +1097,12 @@ class AmazonPhotos:
         df = None
         if self.db_path.name and self.db_path.exists():
             try:
-                df = pd.read_parquet(self.db_path, **kwargs)
+                df = format_nodes(pd.read_parquet(self.db_path, **kwargs))
             except Exception as e:
                 logger.warning(f'Failed to load db `{self.db_path}`\t{e}')
         else:
             logger.warning(f'Database `{self.db_path}` not found, initializing new database')
-            df = self.query()
+            df = format_nodes(self.query())
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
             df.to_parquet(self.db_path)
         return df
