@@ -1,17 +1,23 @@
 # Amazon Photos API
 
 ## Table of Contents
-
-- [Installation](#installation)
-- [Setup](#setup)
-- [Query Syntax](#query-syntax)
-- [Examples](#examples)
+<!-- TOC -->
+* [Installation](#installation)
+* [Setup](#setup)
+* [Examples](#examples)
+* [Search](#search)
+* [Nodes](#nodes)
+  * [Restrictions](#restrictions)
+  * [Range Queries](#range-queries)
+* [Notes](#notes)
+  * [Known File Types](#known-file-types)
+<!-- TOC -->
 
 > It is recommended to use this API in a [Jupyter Notebook](https://jupyter.org/install), as the results from most
 > endpoints
 > are a [DataFrame](https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.html#pandas.DataFrame)
-> which can be neatly displayed in a notebook, and efficiently manipulated with vectorized operations. This becomes
-> increasingly important when dealing with large quantities of data.
+> which can be neatly displayed and efficiently manipulated with vectorized ops. This becomes
+> increasingly important if you have "large" amounts of data (e.g. >1 million photos/videos).
 
 ## Installation
 
@@ -30,7 +36,7 @@ Log in to Amazon Photos and copy the cookies:
 - *`at-acbxx`
 - `session-id`
 
-*Replace `xx` with your country code
+*where `xx` is your country code
 
 ### Option 1: Cookies Dict
 
@@ -64,7 +70,8 @@ export at_acbca="..."
 
 ## Examples
 
-> A database named `ap.parquet` will be created during the initial setup. This is mainly used to reduce upload conflicts by checking your local file(s) md5 against the database before sending the request.
+> A database named `ap.parquet` will be created during the initial setup. This is mainly used to reduce upload conflicts
+> by checking your local file(s) md5 against the database before sending the request.
 
 ```python
 from amazon_photos import AmazonPhotos
@@ -127,9 +134,11 @@ ap.aggregations(category="all")
 ap.aggregations(category="location")
 ```
 
-## Search Queries
-> Note: should be used with caution, not officially documented.
-> For valid **location** and **people** IDs, see the results from the `aggregations()` method.
+## Search
+
+*Undocumented API, current endpoints valid Dec 2023.*
+
+For valid **location** and **people** IDs, see the results from the `aggregations()` method.
 
 | name            | type | description                                                                                                                                                                                                                                               |
 |:----------------|:-----|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -145,7 +154,9 @@ ap.aggregations(category="location")
 | sort            | str  | `"['contentProperties.contentDate DESC']"`<br/>`"['contentProperties.contentDate ASC']"`<br/>`"['createdDate DESC']"`<br/>`"['createdDate ASC']"`<br/>`"['name DESC']"`<br/>`"['name ASC']"`<br/><br/>default: `"['contentProperties.contentDate DESC']"` |
 | tempLink        | str  | `"false"`<br/>`"true"`<br/><br/>default: `"false"`                                                                                                                                                                                                        |             |
 
-## Node Queries - Offical Docs (before 2018)
+## Nodes
+
+*Docs last updated in 2015*
 
 | FieldName                     | FieldType                | Sort Allowed | Notes                                                                                                                                                                                                                                       |
 |-------------------------------|--------------------------|--------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -164,48 +175,25 @@ ap.aggregations(category="location")
 | contentProperties.contentDate | Date (in ISO8601 Format) | Yes          | RangeQueries and equals queries can be used with this field                                                                                                                                                                                 |
 | contentProperties.extension   | String                   | Yes          |                                                                                                                                                                                                                                             |
 
-[//]: # (### Restrictions)
+### Restrictions
 
-[//]: # (**Num of filter parameters allowed**: `8`)
+> Max # of Filter Parameters Allowed is 8
 
-[//]: # ()
+| Filter Type | Filters                                                                               |
+|:------------|:--------------------------------------------------------------------------------------|
+| Equality    | createdDate, description, isRoot, kind, labels, modifiedDate, name, parentIds, status |
+| Range       | contentProperties.contentDate, createdDate, modifiedDate                              |
+| Prefix      | contentProperties.contentType, name                                                   |
 
-[//]: # (**Equality filters**: `name`, `status`, `labels`, `createdDate`, `modifiedDate`, `description`,  `parentIds`, `isRoot`, `kind`)
+### Range Queries
 
-[//]: # ()
-
-[//]: # (**Range Filters**: `modifiedDate`, `createdDate`, `contentProperties.contentDate`)
-
-[//]: # ()
-
-[//]: # (**Prefix Filters**: `name`, `contentProperties.contentType`)
-
-## Range Queries
-| Operation            | Syntax                                                         |
-|----------------------|----------------------------------------------------------------|
+| Operation            | Syntax                                                           |
+|----------------------|------------------------------------------------------------------|
 | GreaterThan          | `{"valueToBeTested" TO *}`                                       |
 | GreaterThan or Equal | `["ValueToBeTested" TO *]`                                       |
 | LessThan             | `{* TO "ValueToBeTested"}`                                       |
 | LessThan or Equal    | `{* TO "ValueToBeTested"]`                                       |
 | Between              | `["ValueToBeTested_LowerBound" TO "ValueToBeTested_UpperBound"]` |
-
-
-### Examples
-
-modifiedDate > "2014-12-31T23:59:59.000Z"
-```
-modifiedDate:{"2014-12-31T23:59:59.000Z" TO *}
-```
-
-modifiedDate <= "2014-12-31T23:59:59.000Z"
-```
-modifiedDate:{* TO "2014-12-31T23:59:59.000Z"]
-```
-
-"2014-01-01T00:00:00.000Z" >= modifiedDate <= "2014-12-31T23:59:59.000Z"
-```
-modifiedDate:["2014-01-01T00:00:00.000Z" TO "2014-12-31T23:59:59.000Z"]
-```
 
 
 ## Notes

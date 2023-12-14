@@ -145,7 +145,12 @@ class AmazonPhotos:
                     logger.debug(f'{r.status_code} {r.text}')
                     return r
 
-                if r.status_code == 401:  # BadAuthenticationData
+                if r.status_code == 400:  # malformed query
+                    logger.error(f'{r.status_code} {r.text}')
+                    logger.error(f'Incorrect query syntax. See readme for query language syntax.')
+                    sys.exit(1)
+
+                if r.status_code == 401:  # "BadAuthenticationData"
                     logger.error(f'{r.status_code} {r.text}')
                     logger.error(f'Cookies expired. Log in to Amazon Photos and copy fresh cookies.')
                     sys.exit(1)
@@ -1113,16 +1118,16 @@ class AmazonPhotos:
         )
         return r.json()
 
-    def nodes(self, filters: list[str], sort: list[str] = None, limit: int = MAX_LIMIT, offset: int = 0, **kwargs) -> pd.DataFrame:
+    def nodes(self, filters: list[str], sort: list[str] = None, limit: int = MAX_LIMIT, offset: int = 0, **kwargs) -> pd.DataFrame | None:
         """
         Get first 9999 Amazon Drive nodes
 
         **Note**: Amazon restricts API access to first 9999 nodes. error: "Offset + limit cannot be greater than 9999"
         startToken/endToken are no longer returned, so we can't use them to paginate.
         """
-        filters = ' AND '.join(filters) if filters else ''
+        filters = ' AND '.join([f"({x})" for x in filters]) if filters else ''
         sort = str(sort) if sort else ''
-        initial = self.backoff(
+        r = self.backoff(
             self.client.get,
             f'{self.base}/nodes',
             params={
@@ -1131,11 +1136,16 @@ class AmazonPhotos:
                 'offset': offset,
                 'filters': filters,
             }
-        ).json()
-        res = [initial]
+        )
+        initial = r.json()
         # small number of results, no need to paginate
         if initial['count'] <= MAX_LIMIT:
-            return format_nodes(pd.json_normalize(initial['data']))
+            if not (df := pd.json_normalize(initial['data'])).empty:
+                return format_nodes(df)
+            logger.info(f'No results found for {filters = }')
+            return
+
+        res = [initial]
         # see AWS error: E.g. "Offset + limit cannot be greater than 9999"
         # offset must be 9799 + limit of 200
         if initial['count'] > MAX_NODES:
