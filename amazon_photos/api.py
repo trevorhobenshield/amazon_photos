@@ -102,7 +102,7 @@ class AmazonPhotos:
             headers=self.client.headers,
             cookies=self.client.cookies,
             limits=Limits(
-                max_connections=kwargs.pop('max_connections', 1000),
+                max_connections=kwargs.pop('max_connections', 2000),
                 max_keepalive_connections=kwargs.pop('max_keepalive_connections', None),
                 keepalive_expiry=kwargs.pop('keepalive_expiry', 5.0),
             ),
@@ -252,6 +252,9 @@ class AmazonPhotos:
         return self.query('type:(VIDEOS)', **kwargs)
 
     def copy_tree(self, path):
+        """
+        todo: room for improvement, can find some parallel graph traversal/batching solutions.
+        """
         dmap = {}
 
         def helper(d: str | Path):
@@ -290,7 +293,7 @@ class AmazonPhotos:
         logger.debug(f'{len(dups)} Duplicate files skipped')
         return files
 
-    def upload(self, folder_path: str, chunk_size=64 * 1024, batch_size: int = 1000, refresh: bool = True, **kwargs) -> list[dict]:
+    def upload(self, folder_path: str, chunk_size=64 * 1024, batch_size: int = 2000, refresh: bool = True, **kwargs) -> list[dict]:
         """
         Upload files to Amazon Photos
 
@@ -387,6 +390,9 @@ class AmazonPhotos:
     def download(self, node_ids: list[str] | pd.Series, out: str = 'media', chunk_size: int = None, **kwargs) -> dict:
         """
         Download files from Amazon Photos
+
+        Alternatives URLs from legacy documentation (2015), not much difference in speed.
+        https://developer.amazon.com/docs/amazon-drive/ad-restful-api-nodes.html#upload-file
 
         @param node_ids: list of media node ids to download
         @param out: path to save files
@@ -880,30 +886,6 @@ class AmazonPhotos:
                 'ContentType': 'JSON',
             }).json()
 
-    async def _nodes(self, client: AsyncClient, filters: str, offset: int, limit: int = MAX_LIMIT) -> dict:
-        """
-        Get Amazon Photos nodes
-
-        @param client: an async client instance
-        @param filters: filters to apply to query
-        @param offset: offset to begin query
-        @param limit: max number of results to return per query
-        @return: nodes as a dict
-        """
-        r = await self.async_backoff(
-            client.get,
-            f'{self.base}/nodes',
-            params={
-                       'limit': limit,
-                       'sort': "['modifiedDate DESC']",
-                       'filters': filters,
-                       'lowResThumbnail': 'true',
-                       'offset': offset,
-                       '_': int(time.time_ns() // 1e6),
-                   } | self.base_params,
-        )
-        return r.json()
-
     def _nodes_head(self, filters: str = '', offset: int = 0, limit: int = MAX_LIMIT, **kwargs) -> list[dict]:
         """
         Get first 9999 Amazon Photos nodes
@@ -1106,3 +1088,68 @@ class AmazonPhotos:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
             df.to_parquet(self.db_path)
         return df
+
+    async def _nodes(self, client: AsyncClient, filters: list[str], sort: list[str], limit: int, offset: int) -> dict:
+        """
+        Get Amazon Photos nodes
+
+        @param client: an async client instance
+        @param filters: filters to apply to query
+        @param offset: offset to begin query
+        @param limit: max number of results to return per query
+        @return: nodes as a dict
+        """
+        r = await self.async_backoff(
+            client.get,
+            f'{self.base}/nodes',
+            params={
+                       'sort': sort,
+                       'limit': limit,
+                       'offset': offset,
+                       'filters': filters,
+                       # 'lowResThumbnail': 'true',
+                       # '_': int(time.time_ns() // 1e6),
+                   } | self.base_params,
+        )
+        return r.json()
+
+    def nodes(self, filters: list[str], sort: list[str] = None, limit: int = MAX_LIMIT, offset: int = 0, **kwargs) -> list[dict]:
+        """
+        Get first 9999 Amazon Photos nodes
+
+        **Note**: Amazon restricts API access to first 9999 nodes. error: "Offset + limit cannot be greater than 9999"
+        startToken/endToken are no longer returned, so we can't use them to paginate.
+
+        E.g.
+        filters = [
+            'kind: FILE',
+            'modifiedDate: [2023-12-13T21:28:35.343Z  TO  2023-12-13T21:28:36.343Z]',
+            'name: data_batch_3*',  # => startswith()
+        ]
+        sort = ['name ASC', 'modifiedDate DESC']
+        """
+        filters = ' AND '.join(filters) if filters else ''
+        sort = str(sort) if sort else ''
+        initial = self.backoff(
+            self.client.get,
+            f'{self.base}/nodes',
+            params={
+                'sort': sort,
+                'limit': limit,
+                'offset': offset,
+                'filters': filters,
+            }
+        ).json()
+        res = [initial]
+        # small number of results, no need to paginate
+        if initial['count'] <= MAX_LIMIT:
+            return [initial]
+        # see AWS error: E.g. "Offset + limit cannot be greater than 9999"
+        # offset must be 9799 + limit of 200
+        if initial['count'] > MAX_NODES:
+            offsets = MAX_NODE_OFFSETS
+        else:
+            offsets = range(offset, min(initial['count'], limit), MAX_LIMIT)
+        fns = (partial(self._nodes, offset=o, filters=filters, sort=sort, limit=limit) for o in offsets)
+        res.extend(asyncio.run(self.process(fns, desc='Node Query', **kwargs)))
+        return res
