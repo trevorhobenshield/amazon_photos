@@ -45,8 +45,9 @@ def format_nodes(df: pd.DataFrame) -> pd.DataFrame:
     }
     date_cols |= {f'{y}.{x}' for x in date_cols for y in ('img', 'video')}
     valid_date_cols = list(date_cols & set(df.columns))
+    valid_cols = cols & set(df.columns)
     df[valid_date_cols] = df[valid_date_cols].apply(pd.to_datetime, format='%Y-%m-%dT%H:%M:%S.%fZ', errors='coerce')
-    df = df[list(cols) + list(set(df.columns) - cols)]
+    df = df[list(valid_cols | (set(df.columns) - cols))]
     return (
         df
         .sort_values('modifiedDate', ascending=False)
