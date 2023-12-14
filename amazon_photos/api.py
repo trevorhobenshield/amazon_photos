@@ -21,7 +21,7 @@ from tqdm.asyncio import tqdm_asyncio
 from datetime import datetime
 
 from .constants import *
-from .helpers import dump
+from .helpers import dump, format_nodes
 
 try:
     get_ipython()
@@ -47,6 +47,8 @@ class AmazonPhotos:
     def __init__(self, *, tld: str = None, cookies: dict = None, **kwargs):
         self.tld = tld or self.determine_tld(cookies)
         self.base = f'https://www.amazon.{self.tld}/drive/v1'
+        self.temp_link_base = 'https://content-na.drive.amazonaws.com/cdproxy/nodes'
+        # self.temp_link_base =  = 'https://content-na.drive.amazonaws.com/cdproxy/v1/nodes' # variant?
         self.base_params = {
             'asset': 'ALL',
             'tempLink': 'false',
@@ -176,10 +178,10 @@ class AmazonPhotos:
             return pd.DataFrame(
                 {
                     'type': k,
-                    'billable_bytes': v['billable']['bytes'],
-                    'billable_count': v['billable']['count'],
-                    'total_bytes': v['total']['bytes'],
-                    'total_count': v['total']['count'],
+                    'billable_bytes': int(v['billable']['bytes']),
+                    'billable_count': int(v['billable']['count']),
+                    'total_bytes': int(v['total']['bytes']),
+                    'total_count': int(v['total']['count']),
                 } for k, v in data.items()
             )
         return data
@@ -1073,23 +1075,8 @@ class AmazonPhotos:
             self.db.reindex(columns=cols).astype(obj_dtype),
         ]).drop_duplicates('id').reset_index(drop=True)
 
-        date_cols = {
-            'contentDate',
-            'createdDate',
-            'creationDate',
-            'dateTime',
-            'dateTimeDigitized',
-            'dateTimeOriginal',
-            'modifiedDate',
-            'ProcessingTimestamp',
-            'VideoMetadataTimestamps',
-            'VideoThumbnailTimestamps',
-            'VideoTranscodeTimestamps',
-        }
-        date_cols |= {f'image.{x}' for x in date_cols}
-        date_cols |= {f'video.{x}' for x in date_cols}
-        valid_date_cols = list(date_cols & set(df.columns))
-        df[valid_date_cols] = df[valid_date_cols].apply(pd.to_datetime, format='%Y-%m-%dT%H:%M:%S.%fZ', errors='coerce')
+        df = format_nodes(df)
+
         df.to_parquet(self.db_path)
         self.db = df
         return df
