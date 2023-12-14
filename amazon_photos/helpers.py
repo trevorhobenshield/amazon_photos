@@ -15,7 +15,7 @@ def dump(cond: bool, res: list[dict], out: str):
 
 
 def format_nodes(df: pd.DataFrame) -> pd.DataFrame:
-    cols = {
+    cols = [
         'createdDate',
         'modifiedDate',
         'id',
@@ -24,12 +24,14 @@ def format_nodes(df: pd.DataFrame) -> pd.DataFrame:
         'name',
         'image.width',
         'image.height',
+        'video.width',
+        'video.height',
         'size',
         'md5',
         'ownerId',
         'contentType',
         'extension',
-    }
+    ]
     date_cols = {
         'contentDate',
         'createdDate',
@@ -45,9 +47,10 @@ def format_nodes(df: pd.DataFrame) -> pd.DataFrame:
     }
     date_cols |= {f'{y}.{x}' for x in date_cols for y in ('img', 'video')}
     valid_date_cols = list(date_cols & set(df.columns))
-    valid_cols = cols & set(df.columns)
     df[valid_date_cols] = df[valid_date_cols].apply(pd.to_datetime, format='%Y-%m-%dT%H:%M:%S.%fZ', errors='coerce')
-    df = df[list(valid_cols | (set(df.columns) - cols))]
+    valid_cols = []  # maintain cols order for readability
+    [valid_cols.append(c) for c in cols if c in df.columns]
+    df = df[valid_cols + list(set(df.columns) - set(cols))]
     return (
         df
         .sort_values('modifiedDate', ascending=False)
