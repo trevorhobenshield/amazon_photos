@@ -21,8 +21,8 @@ pip install amazon-photos
 
 ## Setup
 
-There are two ways to set up authentication. The first is to pass the cookies explicitly to the `AmazonPhotos`
-constructor, the second is to add your cookies as environment variables.
+There are two ways access protected endpoints. The first is to pass cookies explicitly to the `AmazonPhotos`
+constructor, the second is to add cookies as environment variables.
 
 Log in to Amazon Photos and copy the cookies:
 
@@ -62,38 +62,9 @@ export ubid_acbca="..."
 export at_acbca="..."
 ```
 
-## Query Syntax
-
-> For valid **location** and **people** IDs, see the results from the `aggregations()` method.
-
-Example query:
-
-#### `drive/v1/search`
-
-```text
-type:(PHOTOS OR VIDEOS)
-AND things:(plant AND beach OR moon)
-AND timeYear:(2019)
-AND timeMonth:(7)
-AND timeDay:(1)
-AND location:(CAN#BC#Vancouver)
-AND people:(CyChdySYdfj7DHsjdSHdy)
-```
-
-#### `/drive/v1/nodes`
-
-```
-kind:(FILE* OR FOLDER*)
-AND contentProperties.contentType:(image* OR video*)
-AND status:(AVAILABLE*)
-AND settings.hidden:false
-AND favorite:(true)
-```
-
 ## Examples
 
-> A database named `ap.parquet` will be created during the initial setup. This is mainly used to reduce 409 errors (
-> upload conflicts) by checking your local file(s) md5 against the database before sending the request.
+> A database named `ap.parquet` will be created during the initial setup. This is mainly used to reduce upload conflicts by checking your local file(s) md5 against the database before sending the request.
 
 ```python
 from amazon_photos import AmazonPhotos
@@ -120,8 +91,7 @@ ap.usage()
 nodes = ap.query("type:(PHOTOS OR VIDEOS)")
 
 # query Amazon Photos library with more filters applied. (default save to `ap.parquet`)
-nodes = ap.query(
-    "type:(PHOTOS OR VIDEOS) AND things:(plant AND beach OR moon) AND timeYear:(2023) AND timeMonth:(8) AND timeDay:(14) AND location:(CAN#BC#Vancouver)")
+nodes = ap.query("type:(PHOTOS OR VIDEOS) AND things:(plant AND beach OR moon) AND timeYear:(2023) AND timeMonth:(8) AND timeDay:(14) AND location:(CAN#BC#Vancouver)")
 
 # sample first 10 nodes
 node_ids = nodes.id[:10]
@@ -157,7 +127,9 @@ ap.aggregations(category="all")
 ap.aggregations(category="location")
 ```
 
-## Common Paramters
+## Search Queries
+> Note: should be used with caution, not officially documented.
+> For valid **location** and **people** IDs, see the results from the `aggregations()` method.
 
 | name            | type | description                                                                                                                                                                                                                                               |
 |:----------------|:-----|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -173,7 +145,7 @@ ap.aggregations(category="location")
 | sort            | str  | `"['contentProperties.contentDate DESC']"`<br/>`"['contentProperties.contentDate ASC']"`<br/>`"['createdDate DESC']"`<br/>`"['createdDate ASC']"`<br/>`"['name DESC']"`<br/>`"['name ASC']"`<br/><br/>default: `"['contentProperties.contentDate DESC']"` |
 | tempLink        | str  | `"false"`<br/>`"true"`<br/><br/>default: `"false"`                                                                                                                                                                                                        |             |
 
-## Offical Docs (before 2018)
+## Node Queries - Offical Docs (before 2018)
 
 | FieldName                     | FieldType                | Sort Allowed | Notes                                                                                                                                                                                                                                       |
 |-------------------------------|--------------------------|--------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -208,7 +180,17 @@ ap.aggregations(category="location")
 
 [//]: # (**Prefix Filters**: `name`, `contentProperties.contentType`)
 
-## Range Query Examples
+## Range Queries
+| Operation            | Syntax                                                         |
+|----------------------|----------------------------------------------------------------|
+| GreaterThan          | `{"valueToBeTested" TO *}`                                       |
+| GreaterThan or Equal | `["ValueToBeTested" TO *]`                                       |
+| LessThan             | `{* TO "ValueToBeTested"}`                                       |
+| LessThan or Equal    | `{* TO "ValueToBeTested"]`                                       |
+| Between              | `["ValueToBeTested_LowerBound" TO "ValueToBeTested_UpperBound"]` |
+
+
+### Examples
 
 modifiedDate > "2014-12-31T23:59:59.000Z"
 ```
