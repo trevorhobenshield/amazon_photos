@@ -371,7 +371,6 @@ class AmazonPhotos:
                     yield chunk
 
         async def post(client: AsyncClient, pid: str, file: Path, max_retries: int = 12, m: int = 20, b: int = 2):
-            print('pid =', pid)
             for i in range(max_retries + 1):
                 try:
                     r = await client.post(
