@@ -1,5 +1,4 @@
 import asyncio
-import hashlib
 import logging.config
 import math
 import os
@@ -7,7 +6,9 @@ import platform
 import random
 import sys
 import time
+from datetime import datetime
 from functools import partial
+from hashlib import md5
 from logging import getLogger, Logger
 from pathlib import Path
 from typing import Generator
@@ -18,7 +19,6 @@ import orjson
 import pandas as pd
 from httpx import AsyncClient, Client, Response, Limits
 from tqdm.asyncio import tqdm
-from datetime import datetime
 
 from .constants import *
 from .helpers import format_nodes
@@ -321,6 +321,31 @@ class AmazonPhotos:
         copy_dir(path)
         return dmap
 
+    # def dedup_files(self, path: str | Path) -> list[Path]:
+    #     db_md5s = set(self.db.md5)
+    #     async def _hash(path):
+    #         async with aiofiles.open(path, 'rb') as file:
+    #             data = await file.read()
+    #         return md5(data).hexdigest()
+    #
+    #     async def dedup(path):
+    #         tasks = []
+    #         for p in Path(path).rglob('*'):
+    #             if p.is_file():
+    #                 tasks.append((p, asyncio.create_task(_hash(p))))
+    #         unq, dups = [], []
+    #         for p, task in tasks:
+    #             res = await task
+    #             if res not in db_md5s:
+    #                 unq.append(p)
+    #             else:
+    #                 dups.append(p)
+    #         logger.debug(f'{len(unq)} Unique files found')
+    #         logger.warning(f'{len(dups)} Duplicate files skipped')
+    #         return unq
+    #
+    #     return asyncio.run(dedup(path))
+
     def dedup_files(self, folder_path: str):
         files = []
         dups = []
@@ -328,7 +353,7 @@ class AmazonPhotos:
             md5s = set(self.db.md5)
             for file in Path(folder_path).rglob('*'):
                 if file.is_file():
-                    if hashlib.md5(file.read_bytes()).hexdigest() not in md5s:
+                    if md5(file.read_bytes()).hexdigest() not in md5s:
                         files.append(file)
                     else:
                         dups.append(file)
