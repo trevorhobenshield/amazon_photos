@@ -1,20 +1,13 @@
-from pathlib import Path
-
-import orjson
 import pandas as pd
 
 
-def dump(cond: bool, res: list[dict], out: str):
-    if out:
-        if cond:
-            return parse_media(res, out=out)
-        _out = Path(out)
-        _out.parent.mkdir(parents=True, exist_ok=True)
-        _out.write_bytes(orjson.dumps(res))
-    return res
-
-
-def format_nodes(df: pd.DataFrame) -> pd.DataFrame:
+def format_nodes(df: pd.DataFrame) -> pd.DataFrame | None:
+    if df is None or df.empty:
+        return df
+    # .parquet format does not support cols with empty dicts, drop non-essential cols
+    df.drop(columns=['xAccntParentMap', 'assets', 'contentProperties.version'], inplace=True, errors='ignore')
+    # clean up col names and order important cols for readability
+    df.columns = df.columns.str.replace('contentProperties.', '')
     cols = [
         'createdDate',
         'modifiedDate',
@@ -51,28 +44,12 @@ def format_nodes(df: pd.DataFrame) -> pd.DataFrame:
     valid_cols = []  # maintain cols order for readability
     [valid_cols.append(c) for c in cols if c in df.columns]
     df = df[valid_cols + list(set(df.columns) - set(cols))]
-    return (
-        df
-        .sort_values('modifiedDate', ascending=False)
-        .reset_index(drop=True)
-    )
-
-
-def parse_media(media: any, out: str) -> pd.DataFrame:
-    df = pd.json_normalize(y for x in media for y in x['data']).rename(
-        {'contentProperties.version': 'contentPropertiesVersion'}, axis=1
-    )
-    if 'assets' in df.columns:
-        df.drop(columns=['assets'], inplace=True)  # todo: parquet issue
-    df.columns = df.columns.str.replace('contentProperties.', '')  # clean up col names
-    df = format_nodes(df)
-    suffix = Path(out).suffix
-    if suffix == '.parquet':
-        df.to_parquet(out)
-    elif suffix == '.json':
-        df.to_json(out, orient='records')
-    elif suffix == '.csv':
-        df.to_csv(out, index=False)
-    elif suffix == '.xlsx':
-        df.to_excel(out, index=False)
+    try:
+        return (
+            df
+            .sort_values('modifiedDate', ascending=False)
+            .reset_index(drop=True)
+        )
+    except:
+        ...
     return df

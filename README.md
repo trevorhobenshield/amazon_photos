@@ -48,14 +48,8 @@ ap = AmazonPhotos(
         'ubid-acbca': ...,
         'at-acbca': ...,
         'session-id': ...,
-    },
-    # optionally cache directory tree 
-    cache_path='ap.cache',
-    use_cache=True,
+    }
 )
-
-# sanity check, verify authenticated endpoint can be reached
-ap.usage()
 ```
 
 ### Option 2: Environment Variables
@@ -76,6 +70,9 @@ export at_acbca="..."
 ```python
 from amazon_photos import AmazonPhotos
 
+## e.g. using env variables and specifying tld. E.g. amazon.ca (Canada)
+# ap = AmazonPhotos(tld="ca")
+
 ## e.g. using cookies dict
 ap = AmazonPhotos(
     cookies={
@@ -83,13 +80,15 @@ ap = AmazonPhotos(
         'at-acbca': ...,
         'session-id': ...,
     },
-    # optionally cache directory tree 
+    # cache root data and directory tree
     cache_path='ap.cache',
     use_cache=True,
+    # save intermediate node data
+    tmp='tmp',
+    # pandas options
+    dtype_backend='pyarrow',
+    engine='pyarrow',
 )
-
-## e.g. using env variables and specifying tld. E.g. amazon.ca (Canada)
-# ap = AmazonPhotos(tld="ca")
 
 # get current usage stats
 ap.usage()
