@@ -338,105 +338,7 @@ class AmazonPhotos:
         logger.debug(f'{len(dups)} Duplicate files skipped')
         return files
 
-    # def upload(self, folder_path: str, chunk_size=64 * 1024, batch_size: int = 2000, refresh: bool = True, **kwargs) -> list[dict]:
-    #     """
-    #     Upload files to Amazon Photos
-    #
-    #     Copies folder structure to Amazon Photos and uploads files to their respective folders.
-    #
-    #     @param folder_path: path to directory containing files to upload
-    #     @param chunk_size: bytes to upload per chunk
-    #     @param batch_size: number of files to upload per batch
-    #     @return: upload results
-    #     """
-    #     files = self.dedup_files(folder_path)
-    #     dmap = self.copy_tree(folder_path)
-    #     dir_info = [(file, dmap[str(file.parent)]) for file in files]
-    #
-    #     async def stream_bytes(file: Path) -> bytes:
-    #         async with aiofiles.open(file, 'rb') as f:
-    #             while chunk := await f.read(chunk_size):
-    #                 yield chunk
-    #
-    #     async def upload_file(client: AsyncClient, file: Path, pid: str, max_retries: int = 12, m: int = 20, b: int = 2):
-    #         logger.debug(f'Upload start: {file.name}')
-    #         file = Path(file) if isinstance(file, str) else file
-    #         file_content = file.read_bytes()  # todo: not ideal, will refactor eventually
-    #
-    #         ## self.async_backoff wont work, stream will already be consumed by the time it retries
-    #         # r = await client.post(
-    #         #     'https://content-na.drive.amazonaws.com/v2/upload',
-    #         #     data=stream_bytes(file),
-    #         #     params={
-    #         #         'conflictResolution': 'RENAME',
-    #         #         'fileSize': str(len(file_content)),
-    #         #         'name': file.name,
-    #         #         'parentNodeId': pid,
-    #         #     },
-    #         #     headers={
-    #         #         # 'x-amz-access-token':self.client.cookies['at-acbXX'],
-    #         #         'content-length': str(len(file_content)),
-    #         #         'x-amzn-file-md5': hashlib.md5(file_content).hexdigest(),
-    #         #     }
-    #         # )
-    #
-    #         for i in range(max_retries + 1):
-    #             try:
-    #                 r = await client.post(
-    #                     'https://content-na.drive.amazonaws.com/v2/upload',
-    #                     data=stream_bytes(file),
-    #                     params={
-    #                         'conflictResolution': 'RENAME',
-    #                         'fileSize': str(len(file_content)),
-    #                         'name': file.name,
-    #                         'parentNodeId': pid,
-    #                     },
-    #                     headers={
-    #                         # 'x-amz-access-token':self.client.cookies['at-acbXX'],
-    #                         'content-length': str(len(file_content)),
-    #                         'x-amzn-file-md5': hashlib.md5(file_content).hexdigest(),
-    #                     }
-    #                 )
-    #                 if r.status_code == 409:  # conflict
-    #                     logger.debug(f'{r.status_code} {r.text}')
-    #                     break
-    #                 if r.status_code == 401:  # BadAuthenticationData
-    #                     logger.error(f'{r.status_code} {r.text}')
-    #                     logger.error(f'Cookies expired. Log in to Amazon Photos and copy fresh cookies.')
-    #                     sys.exit(1)
-    #                 r.raise_for_status()
-    #                 break
-    #             except Exception as e:
-    #                 if i == max_retries:
-    #                     logger.warning(f'Max retries exceeded\n{e}')
-    #                     data = r.json()
-    #                     logger.error(f'Upload failed: {file.name}\t{data = }\t{r.status_code = }\t{dict(r.headers)}')
-    #                     break
-    #                 t = min(random.random() * (b ** i), m)
-    #                 logger.debug(f'Retrying in {f"{t:.2f}"} seconds\t\t{e}')
-    #                 await asyncio.sleep(t)
-    #
-    #         data = r.json()
-    #         logger.debug(f'Upload success: {file.name}\t{data = }\t{r.status_code = }\t{dict(r.headers)}')
-    #         return data
-    #
-    #     batches = [dir_info[i:i + batch_size] for i in range(0, len(dir_info), batch_size)]
-    #     logger.debug(f'Uploading {len(dir_info)} files from {folder_path}')
-    #     res = []
-    #     for i, batch in enumerate(batches):
-    #         fns = (partial(upload_file, file=file, pid=pid) for file, pid in batch)
-    #         upload_results = asyncio.run(self.process(fns, desc='Uploading Files', **kwargs))
-    #         res.append({'batch': i, 'results': upload_results})
-    #
-    #     if refresh:
-    #         self.refresh_db()
-    #     return res
-
     def upload(self, folder_path: str, chunk_size=64 * 1024, refresh: bool = True, **kwargs) -> list[dict]:
-
-        files = self.dedup_files(folder_path)
-        dmap = self.copy_tree(folder_path)
-        dir_info = [(file, dmap[str(file.parent)]) for file in files]
 
         async def stream_bytes(file: Path) -> bytes:
             async with aiofiles.open(file, 'rb') as f:
@@ -444,6 +346,7 @@ class AmazonPhotos:
                     yield chunk
 
         async def post(client: AsyncClient, pid: str, file: Path, max_retries: int = 12, m: int = 20, b: int = 2):
+            print('pid =', pid)
             for i in range(max_retries + 1):
                 try:
                     r = await client.post(
@@ -452,7 +355,8 @@ class AmazonPhotos:
                         params={
                             'name': file.name,
                             'kind': 'FILE',
-                            'parents': [pid],
+                            # 'parents': [pid], # careful, official docs are wrong again
+                            'parentNodeId': pid,
                         }
                     )
 
@@ -478,7 +382,11 @@ class AmazonPhotos:
                     logger.debug(f'Retrying in {f"{t:.2f}"} seconds\t\t{e}')
                     await asyncio.sleep(t)
 
-        fns = (partial(post, pid=pid, file=file) for file, pid in dir_info)
+        files = self.dedup_files(folder_path)
+        dmap = self.copy_tree(folder_path)
+        node_map = [(file, dmap[str(file.parent)]) for file in files]
+
+        fns = (partial(post, pid=pid, file=file) for file, pid in node_map)
         res = asyncio.run(self.process(fns, desc='Uploading Files', **kwargs))
         if refresh:
             self.refresh_db()
