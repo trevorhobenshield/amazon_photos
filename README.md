@@ -111,6 +111,9 @@ ap.trashed()
 # permanently delete a batch of images/videos.
 ap.delete(node_ids)
 
+# permanently delete all items from trash
+ap.delete(ap.trashed().id)
+
 # restore a batch of images/videos from the trash bin
 ap.restore(node_ids)
 

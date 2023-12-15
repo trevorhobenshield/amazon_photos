@@ -542,7 +542,7 @@ class AmazonPhotos:
                 'sort': "['modifiedDate DESC']",
                 'limit': MAX_LIMIT,
                 'offset': offset,
-                'filters': filters or 'kind:(FILE* OR FOLDER*) AND contentProperties.contentType:(image* OR video*) AND status:(TRASH*)',
+                'filters': filters or 'kind:(FILE* OR FOLDER*) AND status:(TRASH*)',
                 'resourceVersion': 'V2',
                 'ContentType': 'JSON',
                 '_': int(time.time_ns() // 1e6)
