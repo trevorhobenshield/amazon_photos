@@ -76,10 +76,7 @@ class AmazonPhotos:
         )
         self.tmp = Path(tmp)
         self.tmp.mkdir(parents=True, exist_ok=True)
-        self.use_cache = kwargs.pop('use_cache', False)
         self.db_path = Path(kwargs.pop('db_path', 'ap.parquet'))
-        self.cache_path = Path(kwargs.pop('cache_path', ''))
-        self.cache = self.load_cache()
         self.root = self.get_root()
         self.folders = self.get_folders()
         self.db = self.load_db(**kwargs)
@@ -895,35 +892,14 @@ class AmazonPhotos:
                 'ContentType': 'JSON',
             }).json()
 
-    def update_cache(self, **kwargs):
-        if self.cache_path.name:
-            try:
-                self.cache |= kwargs
-                self.cache_path.write_bytes(orjson.dumps(self.cache))  # save to cache
-            except Exception as e:
-                logger.warning(f'Failed to update cache\t{kwargs = }\t{e}')
-        # cache not set, skip
-
-    def get_cache(self, key: str):
-        if self.use_cache:
-            if self.cache and (x := self.cache.get(key)):
-                logger.info(f'Using cached {key} from `{self.cache_path}`')
-                return x
-
     def get_root(self) -> dict:
         """
         isRoot:true filter is sketchy, can add extra data and request is still valid.
         seems like only check is something like: `if(data.contains("true"))`
         """
-        if x := self.get_cache('root'):
-            return x
-
         r = self.backoff(self.client.get, f'{self.drive_url}/nodes', params={'filters': 'isRoot:true'} | self.base_params)
         root = r.json()['data'][0]
         logger.debug(f'Got root node: {root}')
-
-        if self.use_cache:
-            self.update_cache(root=root)
         return root
 
     def get_folders(self):
@@ -965,19 +941,17 @@ class AmazonPhotos:
             results = await asyncio.gather(*tasks, return_exceptions=True)
             return [y for x in results if x for y in x]
 
-        if self.use_cache:
-            if x := self.get_cache('folders'):
-                return x
-
         folders = asyncio.run(main([{'id': self.root['id']}]))
-        self.update_cache(folders=folders)
         return folders
 
     def find_path(self, target: str, root: dict = None):
         if target == '~':
             return self.tree
         root = root or self.tree
-        current_path = '/'.join(root['name_path'] + [root['name']])
+        if root['name'] == '~':
+            current_path = root['name']
+        else:
+            current_path = '/'.join(root['name_path'] + [root['name']])
         if current_path == target:
             return root
         for child in root['children']:
@@ -1080,15 +1054,6 @@ class AmazonPhotos:
         df.to_parquet(self.db_path)
         self.db = df
         return df
-
-    def load_cache(self) -> dict:
-        if self.cache_path.name and self.use_cache:  # ''
-            if self.cache_path.exists():
-                logger.info(f'Loading cache: {self.cache_path}')
-                return orjson.loads(self.cache_path.read_bytes())
-            self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-            self.cache_path.write_text('{}')
-        return {}
 
     def load_db(self, **kwargs):
         df = None
