@@ -7,6 +7,16 @@ MAX_NODES = 9999  # this is a real limit, not a large arbitrary number
 MAX_LIMIT = 200  # max number of nodes to return in a single request
 MAX_NODE_OFFSETS = [i * MAX_LIMIT for i in range(49)] + [MAX_NODES - MAX_LIMIT]
 
+Black = '\x1b[30m'
+Red = '\x1b[31m'
+Green = '\x1b[32m'
+Yellow = '\x1b[33m'
+Blue = '\x1b[34m'
+Magenta = '\x1b[35m'
+Cyan = '\x1b[36m'
+White = '\x1b[37m'
+Reset = '\x1b[0m'
+
 LOG_CONFIG = {
     'version': 1,
     'disable_existing_loggers': False,

@@ -45,9 +45,15 @@ logger = getLogger(list(Logger.manager.loggerDict)[-1])
 
 class AmazonPhotos:
     def __init__(self, *, tld: str = None, cookies: dict = None, tmp: str = '', **kwargs):
+        self.n_threads = len(os.sched_getaffinity(0))
         self.tld = tld or self.determine_tld(cookies)
         self.drive_url = f'https://www.amazon.{self.tld}/drive/v1'
         self.cdn_url = 'https://content-na.drive.amazonaws.com/cdproxy/nodes'  # variant? 'https://content-na.drive.amazonaws.com/cdproxy/v1/nodes'
+        self.limits = kwargs.pop('limits', Limits(
+            max_connections=2000,
+            max_keepalive_connections=None,
+            keepalive_expiry=5.0,
+        ))
         self.base_params = {
             'asset': 'ALL',
             'tempLink': 'false',
@@ -77,6 +83,7 @@ class AmazonPhotos:
         self.root = self.get_root()
         self.folders = self.get_folders()
         self.db = self.load_db(**kwargs)
+        self.tree = self.build_tree()
 
     def determine_tld(self, cookies: dict) -> str:
         """
@@ -98,11 +105,6 @@ class AmazonPhotos:
         @return: results from partials
         """
         desc = kwargs.pop('desc', None)  # tqdm
-        limits = {
-            'max_connections': kwargs.pop('max_connections', batch_size),
-            'max_keepalive_connections': kwargs.pop('max_keepalive_connections', None),
-            'keepalive_expiry': kwargs.pop('keepalive_expiry', 5.0),
-        }
         defaults = {
             'http2': kwargs.pop('http2', True),
             'follow_redirects': kwargs.pop('follow_redirects', True),
@@ -113,7 +115,7 @@ class AmazonPhotos:
             kwargs.pop('headers', {}) | dict(self.client.headers),
             kwargs.pop('cookies', {}) | dict(self.client.cookies)
         )
-        async with AsyncClient(limits=Limits(**limits), headers=headers, cookies=cookies, **defaults, **kwargs) as client:
+        async with AsyncClient(limits=self.limits, headers=headers, cookies=cookies, **defaults, **kwargs) as client:
             queue = asyncio.Queue()
             results = []
             total = 0
@@ -321,31 +323,6 @@ class AmazonPhotos:
         copy_dir(path)
         return dmap
 
-    # def dedup_files(self, path: str | Path) -> list[Path]:
-    #     db_md5s = set(self.db.md5)
-    #     async def _hash(path):
-    #         async with aiofiles.open(path, 'rb') as file:
-    #             data = await file.read()
-    #         return md5(data).hexdigest()
-    #
-    #     async def dedup(path):
-    #         tasks = []
-    #         for p in Path(path).rglob('*'):
-    #             if p.is_file():
-    #                 tasks.append((p, asyncio.create_task(_hash(p))))
-    #         unq, dups = [], []
-    #         for p, task in tasks:
-    #             res = await task
-    #             if res not in db_md5s:
-    #                 unq.append(p)
-    #             else:
-    #                 dups.append(p)
-    #         logger.debug(f'{len(unq)} Unique files found')
-    #         logger.warning(f'{len(dups)} Duplicate files skipped')
-    #         return unq
-    #
-    #     return asyncio.run(dedup(path))
-
     def dedup_files(self, folder_path: str):
         files = []
         dups = []
@@ -493,7 +470,7 @@ class AmazonPhotos:
         else:
             offsets = range(offset, min(initial['count'], limit), MAX_LIMIT)
         fns = (partial(self._nodes, offset=o, filters=filters, limit=MAX_LIMIT) for o in offsets)
-        res.extend(asyncio.run(self.process(fns, desc='getting trashed media', **kwargs)))
+        res.extend(asyncio.run(self.process(fns, desc='Getting trashed media', **kwargs)))
         # return dump(as_df, res, out)
         return format_nodes(pd.DataFrame(y for x in res for y in x.get('data', [])))
 
@@ -945,42 +922,106 @@ class AmazonPhotos:
         root = r.json()['data'][0]
         logger.debug(f'Got root node: {root}')
 
-        self.update_cache(root=root)
+        if self.use_cache:
+            self.update_cache(root=root)
         return root
 
-    def get_folders(self, folder_id: str = None) -> list[dict]:
+    def get_folders(self):
+        aclient = AsyncClient(
+            http2=False,
+            limits=self.limits,
+            headers=self.client.headers,
+            cookies=self.client.cookies,
+            verify=False,
+        )
 
-        def _get(id: str) -> list[dict]:
-            url = f'{self.drive_url}/nodes/{id}/children'
+        async def helper(node):
+            url = f'{self.drive_url}/nodes/{node["id"]}/children'
             params = {'filters': 'kind:FOLDER'} | self.base_params
-            r = self.backoff(self.client.get, url, params=params)
+            r = await aclient.get(url, params=params)
             return r.json()['data']
 
-        def helper(folder: dict) -> dict:
-            logger.debug(f'Scanning folder `{folder["name"]}` ({folder["id"]})')
-            data = folder | {'children': []}
-            folders = _get(folder['id'])
-            for sub in folders:
-                data['children'].append(helper(sub))
-            return data
+        async def process_node(queue):
+            result = []
+            while True:
+                node = await queue.get()
+                if node.get('id'):
+                    subfolders = await helper(node)
+                    for folder in subfolders:
+                        await queue.put(folder)
+                    result.extend(subfolders)
+                queue.task_done()
+                if queue.empty():
+                    return result
 
-        if x := self.get_cache('folders'):
-            return x
-        folders = [helper(node) for node in _get(folder_id or self.root['id'])]
+        async def main(data, batch_size=self.n_threads):
+            Q = asyncio.Queue()
+            for node in data:
+                await Q.put(node)
+            tasks = [asyncio.create_task(process_node(Q)) for _ in range(batch_size)]
+            await Q.join()
+            for task in tasks:
+                task.cancel()
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            return [y for x in results if x for y in x]
+
+        if self.use_cache:
+            if x := self.get_cache('folders'):
+                return x
+
+        folders = asyncio.run(main([{'id': self.root['id']}]))
         self.update_cache(folders=folders)
         return folders
 
-    def find_folder(self, path: str):
-        def helper(curr: list[dict], remaining: list[str]) -> dict | list[dict]:
-            for folder in curr:
-                if folder['name'] == remaining[0]:
-                    if len(remaining) == 1:
-                        return folder['children'] if path.endswith('/') else folder
-                    return helper(folder['children'], remaining[1:])
+    def find_path(self, target: str, root: dict = None):
+        if target == '~':
+            return self.tree
+        root = root or self.tree
+        current_path = '/'.join(root['name_path'] + [root['name']])
+        if current_path == target:
+            return root
+        for child in root['children']:
+            result = self.find_path(target, child)
+            if result is not None:
+                return result
+        return None
 
-        return helper(self.folders, path.strip('/').split('/'))
+    def build_tree(self, folders: list[dict] = None) -> dict:
+        folders = folders or self.folders
+        folders.extend([{'id': self.root['id'], 'name': '~', 'parents': [None]}])
+        nodes = {item['id']: {'name': item['name'], 'id': item['id'], 'children': [], 'path': [], 'name_path': []} for item in folders}
+        root = None
+        for item in folders:
+            node = nodes[item['id']]
+            parent_id = item.get('parents')[0]
+            if parent_id:
+                nodes[parent_id]['children'].append(node)
+                node['path'] = nodes[parent_id]['path'] + [parent_id]
+                node['name_path'] = nodes[parent_id]['name_path'] + [nodes[parent_id]['name']]
+            else:
+                root = node
+                root['path'] = [root['id']]
+                root['name_path'] = [root['name']]
+
+        return root
+
+    def print_tree(self, node: dict = None, prefix='', show_id: bool = True, color: bool = True, indent: int = 4, last=True):
+        node = node or self.tree
+        conn = '└── ' if last else '├── '
+        print(f"{prefix}{conn}{Red if color else ''}{node['name']}{Reset if color else ''} {node['id'] if show_id else ''}")
+        prefix += (indent * ' ') if last else '│' + (' ' * (indent - 1))
+        for i, child in enumerate(node['children']):
+            last_child = i == len(node['children']) - 1
+            self.print_tree(child, prefix, show_id, color, indent, last_child)
+
+    def find_folder(self, path: str):
+        res = [x for x in self.folders if x['name'] == path]
+        if res:
+            return res[0]
 
     def create_folder(self, path: str, debug: int = 0):
+        """todo controlled concurrency"""
+
         def _mkdir(parent_id: str, name: str):
             r = self.backoff(
                 self.client.post,
@@ -994,19 +1035,14 @@ class AmazonPhotos:
             # we get the node id in the error message anyways, so we use that
             return r.json().get('id') or r.json().get('info', {}).get('nodeId')
 
-        tmp = ''
-        parent = None
-        parts = []
-        # look for existing folder structure
-        for p in filter(len, path.split('/')):
-            tmp = os.path.join(tmp, p)
-            if folder := self.find_folder(tmp):
-                parent = folder.get('id')
-            else:
-                parts.append(p)
+        folder = self.find_path(path)
 
-        parent = parent or self.root['id']
-        for part in parts:
+        if folder:
+            parent = folder['id']
+        else:
+            parent = self.root['id']
+
+        for part in path.strip('/').split('/'):
             try:
                 parent = _mkdir(parent, part)
             except Exception as e:
@@ -1016,18 +1052,7 @@ class AmazonPhotos:
 
         # todo: doesn't immediately register folder? time needed for server processing?
         self.folders = self.get_folders()
-        folder = self.find_folder(path)
         return parent, folder
-
-    def __at(self):
-        r = self.client.get(
-            'https://www.amazon.ca/photos/auth/token',
-            params={'_': int(time.time_ns() // 1e6)},
-        )
-        at = r.json()['access_token']
-        # todo: does not work, investigate later
-        # self.client.cookies.update({'at-acb': at})
-        return at
 
     def refresh_db(self) -> pd.DataFrame:
         """
@@ -1057,7 +1082,7 @@ class AmazonPhotos:
         return df
 
     def load_cache(self) -> dict:
-        if self.cache_path.name:  # ''
+        if self.cache_path.name and self.use_cache:  # ''
             if self.cache_path.exists():
                 logger.info(f'Loading cache: {self.cache_path}')
                 return orjson.loads(self.cache_path.read_bytes())
@@ -1144,3 +1169,13 @@ class AmazonPhotos:
             .drop_duplicates('id')
             .reset_index(drop=True)
         )
+
+    def __at(self):
+        r = self.client.get(
+            'https://www.amazon.ca/photos/auth/token',
+            params={'_': int(time.time_ns() // 1e6)},
+        )
+        at = r.json()['access_token']
+        # todo: does not work, investigate later
+        # self.client.cookies.update({'at-acb': at})
+        return at
