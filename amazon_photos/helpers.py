@@ -1,4 +1,20 @@
+from pathlib import Path
+from typing import Generator
+
 import pandas as pd
+
+
+def folder_relmap(root: str, files: Generator | list, folder_map: dict) -> list[tuple[str, str]]:
+    res = []
+    for p in files:
+        if root in p.parts:
+            idx = p.parts.index(root)
+            rel = Path(*p.parts[idx:])
+        else:
+            rel = p
+        fid = folder_map[str(rel.parent)]
+        res.append((fid, p))
+    return res
 
 
 def format_nodes(df: pd.DataFrame) -> pd.DataFrame | None:

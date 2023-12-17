@@ -21,12 +21,11 @@ from httpx import AsyncClient, Client, Response, Limits
 from tqdm.asyncio import tqdm
 
 from .constants import *
-from .helpers import format_nodes
+from .helpers import format_nodes, folder_relmap
 
 try:
     get_ipython()
     import nest_asyncio
-
     nest_asyncio.apply()
 except:
     ...
@@ -34,7 +33,6 @@ except:
 if platform.system() != 'Windows':
     try:
         import uvloop
-
         uvloop.install()
     except:
         ...
@@ -49,17 +47,17 @@ class AmazonPhotos:
         self.tld = tld or self.determine_tld(cookies)
         self.drive_url = f'https://www.amazon.{self.tld}/drive/v1'
         self.cdn_url = 'https://content-na.drive.amazonaws.com/cdproxy/nodes'  # variant? 'https://content-na.drive.amazonaws.com/cdproxy/v1/nodes'
-        self.limits = kwargs.pop('limits', Limits(
-            max_connections=2000,
-            max_keepalive_connections=None,
-            keepalive_expiry=5.0,
-        ))
         self.base_params = {
             'asset': 'ALL',
             'tempLink': 'false',
             'resourceVersion': 'V2',
             'ContentType': 'JSON',
         }
+        self.limits = kwargs.pop('limits', Limits(
+            max_connections=2000,
+            max_keepalive_connections=None,
+            keepalive_expiry=5.0,
+        ))
         self.client = Client(
             http2=False,  # todo: "Max outbound streams is 128, 128 open" errors with http2?
             follow_redirects=True,
@@ -252,15 +250,13 @@ class AmazonPhotos:
         )
         return r.json()
 
-    def query(self, filters: str = "type:(PHOTOS OR VIDEOS)", offset: int = 0, limit: int = math.inf, out: str = 'ap.parquet', **kwargs) -> list[dict] | pd.DataFrame:
+    def query(self, filters: str = "type:(PHOTOS OR VIDEOS)", offset: int = 0, limit: int = math.inf, **kwargs) -> list[dict] | pd.DataFrame:
         """
         Search all media in Amazon Photos
 
         @param filters: query Amazon Photos database. See query language syntax in readme.
         @param offset: offset to begin query
         @param limit: max number of results to return per query
-        @param out: path to save results
-        @param as_df: return as DataFrame
         @return: media data as a dict or DataFrame
         """
         initial = self.backoff(
@@ -283,7 +279,7 @@ class AmazonPhotos:
 
         offsets = range(offset, min(initial['count'], limit), MAX_LIMIT)
         fns = (partial(self.q, offset=o, filters=filters, limit=MAX_LIMIT) for o in offsets)
-        res.extend(asyncio.run(self.process(fns, desc='getting media', **kwargs)))
+        res.extend(asyncio.run(self.process(fns, desc='Getting media', **kwargs)))
         # return dump(as_df, res, out)
         return format_nodes(pd.DataFrame(y for x in res for y in x.get('data', [])))
 
@@ -295,32 +291,13 @@ class AmazonPhotos:
         """Convenience method to get all videos"""
         return self.query('type:(VIDEOS)', **kwargs)
 
-    def copy_tree(self, path):
+    def dedup_files(self, folder_path: str | Path):
         """
-        todo: room for improvement, can find some parallel graph traversal/batching solutions.
+        Deduplicate all files in folder by comparing md5 against database md5
+
+        @param folder_path: path to folder to dedup
+        @return: deduped files
         """
-        dmap = {}
-
-        def helper(d: str | Path):
-            logger.debug(f'Creating Folder: {d}')
-            d = str(d)
-            if not self.find_folder(d):
-                folder_id, folder = self.create_folder(d)
-                dmap[d] = folder_id
-            else:
-                folder = self.find_folder(d)
-                dmap[d] = folder['id']
-
-        def copy_dir(src: str | Path):
-            helper(src)
-            for p in Path(src).iterdir():
-                if p.is_dir():
-                    copy_dir(p)
-
-        copy_dir(path)
-        return dmap
-
-    def dedup_files(self, folder_path: str):
         files = []
         dups = []
         if self.db is not None:
@@ -337,7 +314,16 @@ class AmazonPhotos:
         logger.debug(f'{len(dups)} Duplicate files skipped')
         return files
 
-    def upload(self, folder_path: str, chunk_size=64 * 1024, refresh: bool = True, **kwargs) -> list[dict]:
+    def upload(self, path: str | Path, chunk_size=64 * 1024, refresh: bool = True, **kwargs) -> list[dict]:
+        """
+        Upload files to Amazon Photos
+
+        @param path: path to folder to upload
+        @param chunk_size: optional chunk size
+        @param refresh: refresh database after upload
+        @param kwargs: optional kwargs to pass to AsyncClient
+        @return: upload response
+        """
 
         async def stream_bytes(file: Path) -> bytes:
             async with aiofiles.open(file, 'rb') as f:
@@ -380,12 +366,12 @@ class AmazonPhotos:
                     logger.debug(f'Retrying in {f"{t:.2f}"} seconds\t\t{e}')
                     await asyncio.sleep(t)
 
-        files = self.dedup_files(folder_path)
-        dmap = self.copy_tree(folder_path)
-        node_map = [(file, dmap[str(file.parent)]) for file in files]
-
-        fns = (partial(post, pid=pid, file=file) for file, pid in node_map)
-        res = asyncio.run(self.process(fns, desc='Uploading Files', **kwargs))
+        path = Path(path)
+        folder_map, folders = self.create_folders(path)
+        files = self.dedup_files(path)
+        relmap = folder_relmap(path.name, files, folder_map)
+        fns = (partial(post, pid=pid, file=file) for pid, file in relmap)
+        res = asyncio.run(self.process(fns, desc='Uploading files', **kwargs))
         if refresh:
             self.refresh_db()
         return res
@@ -430,7 +416,7 @@ class AmazonPhotos:
 
     def trashed(self, filters: str = '', offset: int = 0, limit: int = MAX_LIMIT, as_df: bool = True, out: str = 'trashed.json', **kwargs) -> list[dict]:
         """
-        Get trashed media. Essentially a view your trash bin in Amazon Photos.
+        Get trashed nodes. Essentially a view your trash bin in Amazon Photos.
 
         **Note**: Amazon restricts API access to first 9999 nodes
 
@@ -439,7 +425,7 @@ class AmazonPhotos:
         @param limit: max number of results to return per query
         @param as_df: return as pandas DataFrame
         @param out: path to save results
-        @return: trashed media as a dict or DataFrame
+        @return: trashed nodes as a dict or DataFrame
         """
         initial = self.backoff(
             self.client.get,
@@ -466,16 +452,16 @@ class AmazonPhotos:
             offsets = MAX_NODE_OFFSETS
         else:
             offsets = range(offset, min(initial['count'], limit), MAX_LIMIT)
-        fns = (partial(self._nodes, offset=o, filters=filters, limit=MAX_LIMIT) for o in offsets)
-        res.extend(asyncio.run(self.process(fns, desc='Getting trashed media', **kwargs)))
+        fns = (partial(self._get_nodes, offset=o, filters=filters, limit=MAX_LIMIT) for o in offsets)
+        res.extend(asyncio.run(self.process(fns, desc='Getting trashed nodes', **kwargs)))
         # return dump(as_df, res, out)
         return format_nodes(pd.DataFrame(y for x in res for y in x.get('data', [])))
 
     def trash(self, node_ids: list[str] | pd.Series, filters: str = '', **kwargs) -> list[dict]:
         """
-        Move media or entire folders to trash bin
+        Move nodes or entire folders to trash bin
 
-        @param node_ids: list of media ids to trash
+        @param node_ids: list of node ids to trash
         @return: the trash response
         """
 
@@ -498,13 +484,13 @@ class AmazonPhotos:
 
         id_batches = [node_ids[i:i + MAX_TRASH_BATCH] for i in range(0, len(node_ids), MAX_TRASH_BATCH)]
         fns = (partial(patch, ids=ids) for ids in id_batches)
-        return asyncio.run(self.process(fns, desc='trashing files', **kwargs))
+        return asyncio.run(self.process(fns, desc='Trashing files', **kwargs))
 
     def restore(self, node_ids: list[str] | pd.Series) -> Response:
         """
-        Restore media from trash bin
+        Restore nodes from trash bin
 
-        @param node_ids: list of media ids to restore
+        @param node_ids: list of node ids to restore
         @return: the restore response
         """
 
@@ -525,9 +511,9 @@ class AmazonPhotos:
 
     def delete(self, node_ids: list[str] | pd.Series, **kwargs) -> list[dict]:
         """
-        Permanently delete media from Amazon Photos
+        Permanently delete nodes from Amazon Photos
 
-        @param node_ids: list of media ids to delete
+        @param node_ids: list of node ids to delete
         @return: the delete response
         """
 
@@ -547,7 +533,7 @@ class AmazonPhotos:
 
         id_batches = [node_ids[i:i + MAX_PURGE_BATCH] for i in range(0, len(node_ids), MAX_PURGE_BATCH)]
         fns = (partial(post, ids=ids) for ids in id_batches)
-        return asyncio.run(self.process(fns, desc='trashing files', **kwargs))
+        return asyncio.run(self.process(fns, desc='Permanently deleting files', **kwargs))
 
     def aggregations(self, category: str, out: str = 'aggregations') -> dict:
         """
@@ -562,7 +548,7 @@ class AmazonPhotos:
                 self.client.get,
                 f'{self.drive_url}/search',
                 params=self.base_params | {
-                    'limit': 1,  # don't care about media info, just want aggregations
+                    'limit': 1,  # don't care about node info, just want aggregations
                     'lowResThumbnail': 'true',
                     'searchContext': 'all',
                     'groupByForTime': 'year',
@@ -902,7 +888,12 @@ class AmazonPhotos:
         logger.debug(f'Got root node: {root}')
         return root
 
-    def get_folders(self):
+    def get_folders(self) -> list[dict]:
+        """
+        Get all folders in Amazon Photos
+
+        @return: list of folders
+        """
         aclient = AsyncClient(
             http2=False,
             limits=self.limits,
@@ -945,13 +936,20 @@ class AmazonPhotos:
         return folders
 
     def find_path(self, target: str, root: dict = None):
-        if target == '~':
+        """
+        Find path to node in tree
+
+        @param target: path to node
+        @param root: optional root node to search from
+        @return: node
+        """
+        if target == '':
             return self.tree
         root = root or self.tree
-        if root['name'] == '~':
+        if root['name'] == '':
             current_path = root['name']
         else:
-            current_path = '/'.join(root['name_path'] + [root['name']])
+            current_path = '/'.join(filter(len, root['path'].keys()))
         if current_path == target:
             return root
         for child in root['children']:
@@ -961,77 +959,132 @@ class AmazonPhotos:
         return None
 
     def build_tree(self, folders: list[dict] = None) -> dict:
+        """
+        Build tree from folders
+
+        @param folders: list of folders
+        @return: tree
+        """
         folders = folders or self.folders
-        folders.extend([{'id': self.root['id'], 'name': '~', 'parents': [None]}])
-        nodes = {item['id']: {'name': item['name'], 'id': item['id'], 'children': [], 'path': [], 'name_path': []} for item in folders}
+        folders.extend([{'id': self.root['id'], 'name': '', 'parents': [None]}])
+        nodes = {item['id']: {'name': item['name'], 'id': item['id'], 'children': [], 'path': {}} for item in folders}
         root = None
         for item in folders:
             node = nodes[item['id']]
-            parent_id = item.get('parents')[0]
-            if parent_id:
-                nodes[parent_id]['children'].append(node)
-                node['path'] = nodes[parent_id]['path'] + [parent_id]
-                node['name_path'] = nodes[parent_id]['name_path'] + [nodes[parent_id]['name']]
+            if parent_id := item.get('parents')[0]:
+                parent = nodes[parent_id]
+                parent['children'].append(node)
+                node['path'] = parent['path'] | {parent['name']: parent_id} | {node['name']: node['id']}
             else:
                 root = node
-                root['path'] = [root['id']]
-                root['name_path'] = [root['name']]
-
+                root['path'] = {root['name']: root['id']}
         return root
 
-    def print_tree(self, node: dict = None, prefix='', show_id: bool = True, color: bool = True, indent: int = 4, last=True):
+    def print_tree(self, node: dict = None, show_id: bool = True, color: bool = True, indent: int = 4, prefix='', last=True):
+        """
+        Visualize your Amazon Photos folder structure
+
+        @param node: optional root node to start from (default is root)
+        @param show_id: optionally show node id in output
+        @param color: optionally colorize output
+        @param indent: optional indentation level
+        @param prefix: optional prefix to add to output
+        """
         node = node or self.tree
         conn = '└── ' if last else '├── '
         print(f"{prefix}{conn}{Red if color else ''}{node['name']}{Reset if color else ''} {node['id'] if show_id else ''}")
         prefix += (indent * ' ') if last else '│' + (' ' * (indent - 1))
         for i, child in enumerate(node['children']):
             last_child = i == len(node['children']) - 1
-            self.print_tree(child, prefix, show_id, color, indent, last_child)
+            self.print_tree(child, show_id, color, indent, prefix, last_child)
 
-    def find_folder(self, path: str):
-        res = [x for x in self.folders if x['name'] == path]
-        if res:
-            return res[0]
+    def create_folders(self, path: str | Path) -> tuple[dict, list[dict]]:
+        """
+        Recursively create folders in Amazon Photos
 
-    def create_folder(self, path: str, debug: int = 0):
-        """todo controlled concurrency"""
+        @param path: path to root folder to create
+        @return: a {folder: parent ID} map, and list of created folders
+        """
+        folder_map = {}
+        aclient = AsyncClient(
+            http2=False,
+            limits=self.limits,
+            headers=self.client.headers,
+            cookies=self.client.cookies,
+            verify=False,
+        )
 
-        def _mkdir(parent_id: str, name: str):
-            r = self.backoff(
-                self.client.post,
-                f'{self.drive_url}/nodes',
-                json={"kind": "FOLDER", "name": name, "parents": [parent_id], "resourceVersion": "V2", "ContentType": "JSON"},
-            )
-            if debug:
-                logger.debug(f"created new folder {name = } under {parent_id = }")
-            # takes a moment for amazon to process folder creation,
-            # we keep going, if server returns 409
-            # we get the node id in the error message anyways, so we use that
-            return r.json().get('id') or r.json().get('info', {}).get('nodeId')
+        def get_id(data: dict) -> str:
+            return data.get('id') or data.get('info', {}).get('nodeId')
 
-        folder = self.find_path(path)
+        async def mkdir(parent_id: str, path: Path):
+            while True:
+                r = await self.async_backoff(
+                    aclient.post,
+                    f'{self.drive_url}/nodes',
+                    json=self.base_params | {
+                        "kind": "FOLDER",
+                        "name": path.name,
+                        "parents": [parent_id],
+                    },
+                )
+                if r.status_code < 300:
+                    logger.debug(f'Folder created: {path}\t{r.status_code} {r.text}')
+                else:
+                    logger.error(f'Folder creation failed: {path}\t{r.status_code} {r.text}')
+                folder_data = r.json()
+                if get_id(folder_data):
+                    return folder_data
 
-        if folder:
-            parent = folder['id']
-        else:
-            parent = self.root['id']
+        async def process_folder(Q: asyncio.Queue, parent_id: str, path: Path) -> dict:
+            folder = await mkdir(parent_id, path)
+            fid = get_id(folder)
+            folder_map[str(path)] = fid  # track folder id
+            for p in path.iterdir():
+                if p.is_dir():
+                    await Q.put([fid, p])  # map to newly created folder(s) ID
+            return folder
 
-        for part in path.strip('/').split('/'):
-            try:
-                parent = _mkdir(parent, part)
-            except Exception as e:
-                logger.error(f'Folder creation failed: {part}\t{e}')
-                # only retry once, no fancy retry logic
-                parent = _mkdir(parent, part)
+        async def folder_worker(Q: asyncio.Queue) -> list[dict]:
+            res = []
+            while True:
+                parent_id, path = await Q.get()
+                folder = await process_folder(Q, parent_id, path)
+                res.append(folder)
+                Q.task_done()
+                if Q.empty():
+                    return res
 
-        # todo: doesn't immediately register folder? time needed for server processing?
-        self.folders = self.get_folders()
-        return parent, folder
+        async def main(root, n_workers=self.n_threads):
+            # check if local folder name exists in Amazon Photos root
+            root_folder = self.find_path(root.name)
+            if not root_folder:
+                logger.debug(f'Root folder not found, creating root folder: {root.name}')
+                root_folder = await mkdir(self.root['id'], root)
+                logger.debug(f'Created root folder: {root_folder = }')
+
+            parent_id = get_id(root_folder)
+            folder_map[root_folder['name']] = parent_id
+            # init queue with root folder + sub-folders
+            Q = asyncio.Queue()
+            for p in root.iterdir():
+                if p.is_dir():
+                    await Q.put([parent_id, p])  # Add folder and parent ID to queue
+
+            workers = [asyncio.create_task(folder_worker(Q)) for _ in range(n_workers)]
+            await Q.join()
+            [w.cancel() for w in workers]
+            res = await asyncio.gather(*workers, return_exceptions=True)
+            return [y for x in filter(lambda x: isinstance(x, list), res) for y in x]
+
+        res = asyncio.run(main(Path(path)))
+        return folder_map, res
 
     def refresh_db(self) -> pd.DataFrame:
         """
-        todo: may be able to use finegrained node Range Query instead? although results may be limited to 9999 most recent nodes?
+        Refresh database
         """
+        # todo: may be able to use finegrained node Range Query instead? although results may be limited to 9999 most recent nodes?
         logger.info(f'Refreshing db `{self.db_path}`')
         now = datetime.now()
         y, m, d = f'timeYear:({now.year})', f'timeMonth:({now.month})', f'timeDay:({now.day})'
@@ -1056,6 +1109,12 @@ class AmazonPhotos:
         return df
 
     def load_db(self, **kwargs):
+        """
+        Load database
+
+        @param kwargs: optional kwargs to pass to pd.read_parquet
+        @return: DataFrame
+        """
         df = None
         if self.db_path.name and self.db_path.exists():
             try:
@@ -1068,29 +1127,6 @@ class AmazonPhotos:
             df = format_nodes(self.query())
             df.to_parquet(self.db_path)
         return df
-
-    async def _nodes(self, client: AsyncClient, filters: list[str], sort: list[str], limit: int, offset: int) -> dict:
-        """
-        Get Amazon Photos nodes
-
-        @param client: an async client instance
-        @param filters: filters to apply to query
-        @param offset: offset to begin query
-        @param limit: max number of results to return per query
-        @return: nodes as a dict
-        """
-
-        r = await self.async_backoff(
-            client.get,
-            f'{self.drive_url}/nodes',
-            params=self.base_params | {
-                'sort': sort,
-                'limit': limit,
-                'offset': offset,
-                'filters': filters,
-            },
-        )
-        return r.json()
 
     def nodes(self, filters: list[str] = None, sort: list[str] = None, limit: int = MAX_LIMIT, offset: int = 0, **kwargs) -> pd.DataFrame | None:
         """
@@ -1127,13 +1163,36 @@ class AmazonPhotos:
             offsets = MAX_NODE_OFFSETS
         else:
             offsets = range(offset, min(initial['count'], limit), MAX_LIMIT)
-        fns = (partial(self._nodes, offset=o, filters=filters, sort=sort, limit=limit) for o in offsets)
+        fns = (partial(self._get_nodes, offset=o, filters=filters, sort=sort, limit=limit) for o in offsets)
         res.extend(asyncio.run(self.process(fns, desc='Node Query', **kwargs)))
         return format_nodes(
             pd.json_normalize(y for x in res for y in x.get('data', []))
             .drop_duplicates('id')
             .reset_index(drop=True)
         )
+
+    async def _get_nodes(self, client: AsyncClient, filters: list[str], sort: list[str], limit: int, offset: int) -> dict:
+        """
+        Get Amazon Photos nodes
+
+        @param client: an async client instance
+        @param filters: filters to apply to query
+        @param offset: offset to begin query
+        @param limit: max number of results to return per query
+        @return: nodes as a dict
+        """
+
+        r = await self.async_backoff(
+            client.get,
+            f'{self.drive_url}/nodes',
+            params=self.base_params | {
+                'sort': sort,
+                'limit': limit,
+                'offset': offset,
+                'filters': filters,
+            },
+        )
+        return r.json()
 
     def __at(self):
         r = self.client.get(
