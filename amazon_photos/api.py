@@ -991,9 +991,13 @@ class AmazonPhotos:
         @param prefix: optional prefix to add to output
         """
         node = node or self.tree
-        conn = '└── ' if last else '├── '
-        print(f"{prefix}{conn}{Red if color else ''}{node['name']}{Reset if color else ''} {node['id'] if show_id else ''}")
-        prefix += (indent * ' ') if last else '│' + (' ' * (indent - 1))
+        conn = ('└── ' if last else '├── ') if node['name'] else ''
+        name = node['name'] or '~'
+        print(f"{prefix}{conn}{Red if color else ''}{name}{Reset if color else ''} {node['id'] if show_id else ''}")
+        if node['name']:
+            prefix += (indent * ' ') if last else '│' + (' ' * (indent - 1))
+        else:
+            prefix = ''
         for i, child in enumerate(node['children']):
             last_child = i == len(node['children']) - 1
             self.print_tree(child, show_id, color, indent, prefix, last_child)

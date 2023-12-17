@@ -1,16 +1,19 @@
 # Amazon Photos API
 
 ## Table of Contents
+
 <!-- TOC -->
+
 * [Installation](#installation)
 * [Setup](#setup)
 * [Examples](#examples)
 * [Search](#search)
 * [Nodes](#nodes)
-  * [Restrictions](#restrictions)
-  * [Range Queries](#range-queries)
+    * [Restrictions](#restrictions)
+    * [Range Queries](#range-queries)
 * [Notes](#notes)
-  * [Known File Types](#known-file-types)
+    * [Known File Types](#known-file-types)
+
 <!-- TOC -->
 
 > It is recommended to use this API in a [Jupyter Notebook](https://jupyter.org/install), as the results from most
@@ -18,6 +21,36 @@
 > are a [DataFrame](https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.html#pandas.DataFrame)
 > which can be neatly displayed and efficiently manipulated with vectorized ops. This becomes
 > increasingly important if you have "large" amounts of data (e.g. >1 million photos/videos).
+
+### Output Examples
+
+`ap.db`
+
+|      | createdDate                | modifiedDate               | image.dateTime      | name      | image.width | image.height |
+|------|----------------------------|----------------------------|---------------------|-----------|-------------|--------------|
+| 6360 | 2023-12-13 21:16:16.879000 | 2023-12-13 21:16:20.553000 | 2020-08-08 20:49:37 | test1.jpg | 3024.0      | 4032.0       |
+| 6361 | 2023-12-13 21:16:13.481000 | 2023-12-13 21:16:20.543000 | 2020-06-10 13:34:11 | test2.jpg | 2730.0      | 4096.0       |
+| 6430 | 2023-12-13 21:16:12.090000 | 2023-12-13 21:16:17.280000 | \<NA>               | test3.jpg | 3024.0      | 4032.0       |
+| 6484 | 2023-12-13 21:16:08.306000 | 2023-12-13 21:16:14.276000 | \<NA>               | test4.jpg | 2304.0      | 3072.0       |
+| 6530 | 2023-12-13 21:16:07.487000 | 2023-12-13 21:16:12.030000 | 2020-07-15 13:35:54 | test5.jpg | 3024.0      | 4032.0       |
+
+`ap.print_tree()`
+
+```text
+~ 
+├── Documents 
+├── Pictures 
+│   ├── iPhone 
+│   └── Web 
+│       ├── foo 
+│       └── bar
+├── Videos 
+└── Backup 
+    ├── LAPTOP-XYZ 
+    │   └── Desktop 
+    └── DESKTOP-IJK 
+        └── Desktop
+```
 
 ## Installation
 
@@ -80,11 +113,6 @@ ap = AmazonPhotos(
         'at-acbca': ...,
         'session-id': ...,
     },
-    # cache root data and directory tree
-    cache_path='ap.cache',
-    use_cache=True,
-    # save intermediate node data
-    tmp='tmp',
     # pandas options
     dtype_backend='pyarrow',
     engine='pyarrow',
@@ -193,7 +221,6 @@ For valid **location** and **people** IDs, see the results from the `aggregation
 | LessThan             | `{* TO "ValueToBeTested"}`                                       |
 | LessThan or Equal    | `{* TO "ValueToBeTested"]`                                       |
 | Between              | `["ValueToBeTested_LowerBound" TO "ValueToBeTested_UpperBound"]` |
-
 
 ## Notes
 
