@@ -1033,18 +1033,20 @@ class AmazonPhotos:
                     },
                 )
                 if r.status_code < 300:
-                    logger.debug(f'Folder created: {path}\t{r.status_code} {r.text}')
+                    logger.debug(f'Folder created: {path.name}\t{r.status_code} {r.text}')
                 else:
-                    logger.error(f'Folder creation failed: {path}\t{r.status_code} {r.text}')
+                    logger.error(f'Folder creation failed: {path.name}\t{r.status_code} {r.text}')
                 folder_data = r.json()
                 if get_id(folder_data):
                     return folder_data
 
-        async def process_folder(Q: asyncio.Queue, parent_id: str, path: Path) -> dict:
-            folder = await mkdir(parent_id, path)
+        async def process_folder(Q: asyncio.Queue, parent_id: str, path_: Path) -> dict:
+            folder = await mkdir(parent_id, path_)
             fid = get_id(folder)
-            folder_map[str(path)] = fid  # track folder id
-            for p in path.iterdir():
+            idx = path_.parts.index(path.name)
+            rel = Path(*path_.parts[idx:])
+            folder_map[str(rel)] = fid  # track parent folder id relative to root
+            for p in path_.iterdir():
                 if p.is_dir():
                     await Q.put([fid, p])  # map to newly created folder(s) ID
             return folder
