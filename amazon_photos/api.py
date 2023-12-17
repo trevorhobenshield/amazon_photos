@@ -20,7 +20,7 @@ import orjson
 import pandas as pd
 import psutil
 from httpx import AsyncClient, Client, Response, Limits
-from tqdm.asyncio import tqdm
+from tqdm.asyncio import tqdm, tqdm_asyncio
 
 from .constants import *
 from .helpers import format_nodes, folder_relmap
@@ -46,7 +46,7 @@ logger = getLogger(list(Logger.manager.loggerDict)[-1])
 
 
 class AmazonPhotos:
-    def __init__(self, *, tld: str = None, cookies: dict = None, tmp: str = '', **kwargs):
+    def __init__(self, *, tld: str = None, cookies: dict = None, db_path: str | Path = 'ap.parquet', tmp: str = '', **kwargs):
         self.n_threads = len(os.sched_getaffinity(0))
         self.tld = tld or self.determine_tld(cookies)
         self.drive_url = f'https://www.amazon.{self.tld}/drive/v1'
@@ -78,7 +78,7 @@ class AmazonPhotos:
         )
         self.tmp = Path(tmp)
         self.tmp.mkdir(parents=True, exist_ok=True)
-        self.db_path = Path(kwargs.pop('db_path', 'ap.parquet'))
+        self.db_path = Path(db_path)
         self.root = self.get_root()
         self.folders = self.get_folders()
         self.db = self.load_db(**kwargs)
@@ -95,13 +95,14 @@ class AmazonPhotos:
             if k.startswith(x := 'at-acb'):
                 return k.split(x)[-1]
 
-    async def process(self, partials: Generator, batch_size: int = 2000, **kwargs):
+    async def process(self, fns: Generator, max_connections: int = None, **kwargs):
         """
-        Process async partials in batches
+        Efficiently process a generator of async partials
 
-        @param batch_size: number of partials to process per batch
-        @param kwargs: optional kwargs to pass to AsyncClient
-        @return: results from partials
+        @param fns: generator of async partials
+        @param max_connections: max number of connections to use (controlled by semaphore)
+        @param kwargs: optional kwargs to pass to AsyncClient and tqdm
+        @return: list of results
         """
         desc = kwargs.pop('desc', None)  # tqdm
         defaults = {
@@ -114,55 +115,36 @@ class AmazonPhotos:
             kwargs.pop('headers', {}) | dict(self.client.headers),
             kwargs.pop('cookies', {}) | dict(self.client.cookies)
         )
+        sem = asyncio.Semaphore(max_connections or self.limits.max_connections)
         async with AsyncClient(limits=self.limits, headers=headers, cookies=cookies, **defaults, **kwargs) as client:
-            queue = asyncio.Queue()
-            results = []
-            total = 0
+            tasks = (fn(client=client, sem=sem) for fn in fns)
+            if desc:
+                return await tqdm_asyncio.gather(*tasks, desc=desc)
+            return await asyncio.gather(*tasks)
 
-            async def worker(pbar):
-                while True:
-                    task_fn, done = await queue.get()
-                    try:
-                        res = await task_fn(client=client)
-                        done.append(res)
-                    except Exception as e:
-                        logger.error(f'Task failed: {e}')
-                    queue.task_done()
-                    pbar.update(1)
-
-            with tqdm(total=total, desc=desc) as pbar:
-                workers = [asyncio.create_task(worker(pbar)) for _ in range(batch_size)]
-                for p in partials:
-                    done = []
-                    await queue.put((p, done))
-                    results.append(done)
-                    total += 1
-                    pbar.total = total
-                await queue.join()
-                for w in workers:
-                    w.cancel()
-            return [y for x in results for y in x]
-
-    async def async_backoff(self, fn, *args, m: int = 20, b: int = 2, max_retries: int = 12, **kwargs) -> any:
+    async def async_backoff(self, fn, sem: asyncio.Semaphore, *args, m: int = 20, b: int = 2, max_retries: int = 12, **kwargs) -> any:
         """Async truncated exponential backoff"""
         for i in range(max_retries + 1):
             try:
-                r = await fn(*args, **kwargs)
-                if r.status_code == 409:  # conflict
-                    logger.debug(f'{r.status_code} {r.text}')
+                async with sem:
+
+                    r = await fn(*args, **kwargs)
+
+                    if r.status_code == 409:  # conflict
+                        logger.debug(f'{r.status_code} {r.text}')
+                        return r
+
+                    if r.status_code == 401:  # BadAuthenticationData
+                        logger.error(f'{r.status_code} {r.text}')
+                        logger.error(f'Cookies expired. Log in to Amazon Photos and copy fresh cookies.')
+                        sys.exit(1)
+
+                    r.raise_for_status()
+
+                    if self.tmp.name:
+                        async with aiofiles.open(f'{self.tmp}/{time.time_ns()}', 'wb') as fp:
+                            await fp.write(r.content)
                     return r
-
-                if r.status_code == 401:  # BadAuthenticationData
-                    logger.error(f'{r.status_code} {r.text}')
-                    logger.error(f'Cookies expired. Log in to Amazon Photos and copy fresh cookies.')
-                    sys.exit(1)
-
-                r.raise_for_status()
-
-                if self.tmp.name:
-                    async with aiofiles.open(f'{self.tmp}/{time.time_ns()}', 'wb') as fp:
-                        await fp.write(r.content)
-                return r
             except Exception as e:
                 if i == max_retries:
                     logger.warning(f'Max retries exceeded\n{e}')
@@ -229,7 +211,7 @@ class AmazonPhotos:
             } for k, v in data.items()
         )
 
-    async def q(self, client: AsyncClient, filters: str, offset: int, limit: int = MAX_LIMIT) -> dict:
+    async def q(self, client: AsyncClient, sem: asyncio.Semaphore, filters: str, offset: int, limit: int = MAX_LIMIT) -> dict:
         """
         Lower level access to Amazon Photos search.
         The `query` method using this to search all media in Amazon Photos.
@@ -242,6 +224,7 @@ class AmazonPhotos:
         """
         r = await self.async_backoff(
             client.get,
+            sem,
             f'{self.drive_url}/search',
             params=self.base_params | {
                 "limit": limit,
@@ -346,34 +329,35 @@ class AmazonPhotos:
                 while chunk := await f.read(chunk_size):
                     yield chunk
 
-        async def post(client: AsyncClient, pid: str, file: Path, max_retries: int = 12, m: int = 20, b: int = 2):
+        async def post(client: AsyncClient, sem: asyncio.Semaphore, pid: str, file: Path, max_retries: int = 12, m: int = 20, b: int = 2):
             for i in range(max_retries + 1):
                 try:
-                    r = await client.post(
-                        f'https://content-na.drive.amazonaws.com/cdproxy/nodes',
-                        data=stream_bytes(file),
-                        params={
-                            'name': file.name,
-                            'kind': 'FILE',
-                            # 'parents': [pid], # careful, official docs are wrong again
-                            'parentNodeId': pid,
-                        }
-                    )
+                    async with sem:
+                        r = await client.post(
+                            f'https://content-na.drive.amazonaws.com/cdproxy/nodes',
+                            data=stream_bytes(file),
+                            params={
+                                'name': file.name,
+                                'kind': 'FILE',
+                                # 'parents': [pid], # careful, official docs are wrong again
+                                'parentNodeId': pid,
+                            }
+                        )
 
-                    if r.status_code == 409:  # conflict
-                        logger.debug(f'{r.status_code} {r.text}')
+                        if r.status_code == 409:  # conflict
+                            logger.debug(f'{r.status_code} {r.text}')
+                            return r
+
+                        if r.status_code == 400:
+                            logger.error(f'{r.status_code} {r.text}')
+                            sys.exit(1)
+
+                        if r.status_code == 401:  # BadAuthenticationData
+                            logger.error(f'{r.status_code} {r.text}')
+                            logger.error(f'Cookies expired. Log in to Amazon Photos and copy fresh cookies.')
+                            sys.exit(1)
+                        r.raise_for_status()
                         return r
-
-                    if r.status_code == 400:
-                        logger.error(f'{r.status_code} {r.text}')
-                        sys.exit(1)
-
-                    if r.status_code == 401:  # BadAuthenticationData
-                        logger.error(f'{r.status_code} {r.text}')
-                        logger.error(f'Cookies expired. Log in to Amazon Photos and copy fresh cookies.')
-                        sys.exit(1)
-                    r.raise_for_status()
-                    return r
                 except Exception as e:
                     if i == max_retries:
                         logger.warning(f'Max retries exceeded\n{e}')
@@ -395,9 +379,6 @@ class AmazonPhotos:
     def download(self, node_ids: list[str] | pd.Series, out: str = 'media', chunk_size: int = None, **kwargs) -> dict:
         """
         Download files from Amazon Photos
-
-        Alternatives URLs from legacy documentation (2015), not much difference in speed.
-        https://developer.amazon.com/docs/amazon-drive/ad-restful-api-nodes.html#upload-file
 
         @param node_ids: list of media node ids to download
         @param out: path to save files
@@ -1037,10 +1018,11 @@ class AmazonPhotos:
         def get_id(data: dict) -> str:
             return data.get('id') or data.get('info', {}).get('nodeId')
 
-        async def mkdir(parent_id: str, path: Path):
+        async def mkdir(sem: asyncio.Semaphore, parent_id: str, path: Path):
             while True:
                 r = await self.async_backoff(
                     aclient.post,
+                    sem,
                     f'{self.drive_url}/nodes',
                     json=self.base_params | {
                         "kind": "FOLDER",
@@ -1056,8 +1038,8 @@ class AmazonPhotos:
                 if get_id(folder_data):
                     return folder_data
 
-        async def process_folder(Q: asyncio.Queue, parent_id: str, path_: Path) -> dict:
-            folder = await mkdir(parent_id, path_)
+        async def process_folder(sem: asyncio.Semaphore, Q: asyncio.Queue, parent_id: str, path_: Path) -> dict:
+            folder = await mkdir(sem, parent_id, path_)
             fid = get_id(folder)
             idx = path_.parts.index(path.name)
             rel = Path(*path_.parts[idx:])
@@ -1067,22 +1049,23 @@ class AmazonPhotos:
                     await Q.put([fid, p])  # map to newly created folder(s) ID
             return folder
 
-        async def folder_worker(Q: asyncio.Queue) -> list[dict]:
+        async def folder_worker(sem: asyncio.Semaphore, Q: asyncio.Queue) -> list[dict]:
             res = []
             while True:
                 parent_id, path = await Q.get()
-                folder = await process_folder(Q, parent_id, path)
+                folder = await process_folder(sem, Q, parent_id, path)
                 res.append(folder)
                 Q.task_done()
                 if Q.empty():
                     return res
 
-        async def main(root, n_workers=self.n_threads):
+        async def main(root, n_workers=self.n_threads, max_connections: int = self.limits.max_connections):
+            sem = asyncio.Semaphore(max_connections)
             # check if local folder name exists in Amazon Photos root
             root_folder = self.find_path(root.name)
             if not root_folder:
                 logger.debug(f'Root folder not found, creating root folder: {root.name}')
-                root_folder = await mkdir(self.root['id'], root)
+                root_folder = await mkdir(sem, self.root['id'], root)
                 logger.debug(f'Created root folder: {root_folder = }')
 
             parent_id = get_id(root_folder)
@@ -1092,8 +1075,7 @@ class AmazonPhotos:
             for p in root.iterdir():
                 if p.is_dir():
                     await Q.put([parent_id, p])  # Add folder and parent ID to queue
-
-            workers = [asyncio.create_task(folder_worker(Q)) for _ in range(n_workers)]
+            workers = [asyncio.create_task(folder_worker(sem, Q)) for _ in range(n_workers)]
             await Q.join()
             [w.cancel() for w in workers]
             res = await asyncio.gather(*workers, return_exceptions=True)
@@ -1193,7 +1175,7 @@ class AmazonPhotos:
             .reset_index(drop=True)
         )
 
-    async def _get_nodes(self, client: AsyncClient, filters: list[str], sort: list[str], limit: int, offset: int) -> dict:
+    async def _get_nodes(self, client: AsyncClient, sem: asyncio.Semaphore, filters: list[str], sort: list[str], limit: int, offset: int) -> dict:
         """
         Get Amazon Photos nodes
 
@@ -1206,6 +1188,7 @@ class AmazonPhotos:
 
         r = await self.async_backoff(
             client.get,
+            sem,
             f'{self.drive_url}/nodes',
             params=self.base_params | {
                 'sort': sort,
