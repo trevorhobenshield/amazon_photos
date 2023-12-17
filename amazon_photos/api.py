@@ -394,16 +394,17 @@ class AmazonPhotos:
             'ownerId': self.root['ownerId'],
         }
 
-        async def get(client: AsyncClient, node: str) -> None:
+        async def get(client: AsyncClient, sem: asyncio.Semaphore, node: str) -> None:
             logger.debug(f'Downloading {node}')
             try:
-                url = f'{self.drive_url}/nodes/{node}/contentRedirection'
-                async with client.stream('GET', url, params=params) as r:
-                    content_disposition = dict([y for x in r.headers['content-disposition'].split('; ') if len((y := x.split('='))) > 1])
-                    fname = content_disposition['filename'].strip('"')
-                    async with aiofiles.open(out / f"{node}_{fname}", 'wb') as fp:
-                        async for chunk in r.aiter_bytes(chunk_size):
-                            await fp.write(chunk)
+                async with sem:
+                    url = f'{self.drive_url}/nodes/{node}/contentRedirection'
+                    async with client.stream('GET', url, params=params) as r:
+                        content_disposition = dict([y for x in r.headers['content-disposition'].split('; ') if len((y := x.split('='))) > 1])
+                        fname = content_disposition['filename'].strip('"')
+                        async with aiofiles.open(out / f"{node}_{fname}", 'wb') as fp:
+                            async for chunk in r.aiter_bytes(chunk_size):
+                                await fp.write(chunk)
             except Exception as e:
                 logger.debug(f'Download FAILED for {node}\t{e}')
 
@@ -465,19 +466,20 @@ class AmazonPhotos:
         if isinstance(node_ids, pd.Series):
             node_ids = node_ids.tolist()
 
-        async def patch(client: AsyncClient, ids: list[str]) -> Response:
-            return await client.patch(
-                f'{self.drive_url}/trash',
-                json={
-                    'recurse': 'true',
-                    'op': 'add',
-                    'filters': filters,
-                    'conflictResolution': 'RENAME',
-                    'value': ids,
-                    'resourceVersion': 'V2',
-                    'ContentType': 'JSON',
-                }
-            )
+        async def patch(client: AsyncClient, sem: asyncio.Semaphore, ids: list[str]) -> Response:
+            async with sem:
+                return await client.patch(
+                    f'{self.drive_url}/trash',
+                    json={
+                        'recurse': 'true',
+                        'op': 'add',
+                        'filters': filters,
+                        'conflictResolution': 'RENAME',
+                        'value': ids,
+                        'resourceVersion': 'V2',
+                        'ContentType': 'JSON',
+                    }
+                )
 
         id_batches = [node_ids[i:i + MAX_TRASH_BATCH] for i in range(0, len(node_ids), MAX_TRASH_BATCH)]
         fns = (partial(patch, ids=ids) for ids in id_batches)
@@ -517,16 +519,17 @@ class AmazonPhotos:
         if isinstance(node_ids, pd.Series):
             node_ids = node_ids.tolist()
 
-        async def post(client: AsyncClient, ids: list[str]) -> Response:
-            return await client.post(
-                f'{self.drive_url}/bulk/nodes/purge',
-                json={
-                    'recurse': 'false',
-                    'nodeIds': ids,
-                    'resourceVersion': 'V2',
-                    'ContentType': 'JSON',
-                }
-            )
+        async def post(client: AsyncClient, sem: asyncio.Semaphore, ids: list[str]) -> Response:
+            async with sem:
+                return await client.post(
+                    f'{self.drive_url}/bulk/nodes/purge',
+                    json={
+                        'recurse': 'false',
+                        'nodeIds': ids,
+                        'resourceVersion': 'V2',
+                        'ContentType': 'JSON',
+                    }
+                )
 
         id_batches = [node_ids[i:i + MAX_PURGE_BATCH] for i in range(0, len(node_ids), MAX_PURGE_BATCH)]
         fns = (partial(post, ids=ids) for ids in id_batches)
@@ -593,15 +596,16 @@ class AmazonPhotos:
         if isinstance(node_ids, pd.Series):
             node_ids = node_ids.tolist()
 
-        async def patch(client: AsyncClient, node_id: str) -> dict:
-            r = await client.patch(f'{self.drive_url}/nodes/{node_id}', json={
-                'settings': {
-                    'favorite': True,
-                },
-                'resourceVersion': 'V2',
-                'ContentType': 'JSON',
-            })
-            return r.json()
+        async def patch(client: AsyncClient, sem: asyncio.Semaphore, node_id: str) -> dict:
+            async with sem:
+                r = await client.patch(f'{self.drive_url}/nodes/{node_id}', json={
+                    'settings': {
+                        'favorite': True,
+                    },
+                    'resourceVersion': 'V2',
+                    'ContentType': 'JSON',
+                })
+                return r.json()
 
         fns = (partial(patch, ids=ids) for ids in node_ids)
         return asyncio.run(self.process(fns, desc='adding media to favorites', **kwargs))
@@ -617,15 +621,16 @@ class AmazonPhotos:
         if isinstance(node_ids, pd.Series):
             node_ids = node_ids.tolist()
 
-        async def patch(client: AsyncClient, node_id: str) -> dict:
-            r = await client.patch(f'{self.drive_url}/nodes/{node_id}', json={
-                'settings': {
-                    'favorite': False,
-                },
-                'resourceVersion': 'V2',
-                'ContentType': 'JSON',
-            })
-            return r.json()
+        async def patch(client: AsyncClient, sem: asyncio.Semaphore, node_id: str) -> dict:
+            async with sem:
+                r = await client.patch(f'{self.drive_url}/nodes/{node_id}', json={
+                    'settings': {
+                        'favorite': False,
+                    },
+                    'resourceVersion': 'V2',
+                    'ContentType': 'JSON',
+                })
+                return r.json()
 
         fns = (partial(patch, ids=ids) for ids in node_ids)
         return asyncio.run(self.process(fns, desc='removing media from favorites', **kwargs))
@@ -733,18 +738,19 @@ class AmazonPhotos:
         if isinstance(node_ids, pd.Series):
             node_ids = node_ids.tolist()
 
-        async def patch(client: AsyncClient, node_id: str) -> dict:
-            r = await client.patch(
-                f'{self.drive_url}/nodes/{node_id}',
-                json={
-                    'settings': {
-                        'hidden': True,
-                    },
-                    'resourceVersion': 'V2',
-                    'ContentType': 'JSON',
-                }
-            )
-            return r.json()
+        async def patch(client: AsyncClient, sem: asyncio.Semaphore, node_id: str) -> dict:
+            async with sem:
+                r = await client.patch(
+                    f'{self.drive_url}/nodes/{node_id}',
+                    json={
+                        'settings': {
+                            'hidden': True,
+                        },
+                        'resourceVersion': 'V2',
+                        'ContentType': 'JSON',
+                    }
+                )
+                return r.json()
 
         fns = (partial(patch, ids=ids) for ids in node_ids)
         return asyncio.run(self.process(fns, desc='hiding media', **kwargs))
@@ -760,18 +766,19 @@ class AmazonPhotos:
         if isinstance(node_ids, pd.Series):
             node_ids = node_ids.tolist()
 
-        async def patch(client: AsyncClient, node_id: str) -> dict:
-            r = await client.patch(
-                f'{self.drive_url}/nodes/{node_id}',
-                json={
-                    'settings': {
-                        'hidden': False,
-                    },
-                    'resourceVersion': 'V2',
-                    'ContentType': 'JSON',
-                }
-            )
-            return r.json()
+        async def patch(client: AsyncClient, sem: asyncio.Semaphore, node_id: str) -> dict:
+            async with sem:
+                r = await client.patch(
+                    f'{self.drive_url}/nodes/{node_id}',
+                    json={
+                        'settings': {
+                            'hidden': False,
+                        },
+                        'resourceVersion': 'V2',
+                        'ContentType': 'JSON',
+                    }
+                )
+                return r.json()
 
         fns = (partial(patch, ids=ids) for ids in node_ids)
         return asyncio.run(self.process(fns, desc='unhiding media', **kwargs))
