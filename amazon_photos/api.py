@@ -299,11 +299,13 @@ class AmazonPhotos:
     def _md5(p):
         return p, md5(p.read_bytes()).hexdigest()
 
-    def dedup_files(self, db: pd.DataFrame, path: str | Path, max_workers=psutil.cpu_count(logical=False)):
+    def dedup_files(self, db: pd.DataFrame, path: str | Path, max_workers=psutil.cpu_count(logical=False)) -> list[Path]:
         """
         Deduplicate all files in folder by comparing md5 against database md5
 
-        @param folder_path: path to folder to dedup
+        @param db: database
+        @param path: path to folder to dedup
+        @param max_workers: max number of workers to use
         @return: deduped files
         """
         if db is None:

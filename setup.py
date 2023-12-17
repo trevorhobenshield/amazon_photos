@@ -4,6 +4,7 @@ from setuptools import find_packages, setup
 from pathlib import Path
 
 install_requires = [
+    'psutil',
     'nest-asyncio',
     'tqdm',
     'uvloop; platform_system != "Windows"',
