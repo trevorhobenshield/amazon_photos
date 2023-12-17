@@ -6,6 +6,7 @@ import platform
 import random
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from functools import partial
 from hashlib import md5
@@ -17,6 +18,7 @@ import aiofiles
 import numpy as np
 import orjson
 import pandas as pd
+import psutil
 from httpx import AsyncClient, Client, Response, Limits
 from tqdm.asyncio import tqdm
 
@@ -26,6 +28,7 @@ from .helpers import format_nodes, folder_relmap
 try:
     get_ipython()
     import nest_asyncio
+
     nest_asyncio.apply()
 except:
     ...
@@ -33,6 +36,7 @@ except:
 if platform.system() != 'Windows':
     try:
         import uvloop
+
         uvloop.install()
     except:
         ...
@@ -291,28 +295,38 @@ class AmazonPhotos:
         """Convenience method to get all videos"""
         return self.query('type:(VIDEOS)', **kwargs)
 
-    def dedup_files(self, folder_path: str | Path):
+    @staticmethod
+    def _md5(p):
+        return p, md5(p.read_bytes()).hexdigest()
+
+    def dedup_files(self, db: pd.DataFrame, path: str | Path, max_workers=psutil.cpu_count(logical=False)):
         """
         Deduplicate all files in folder by comparing md5 against database md5
 
         @param folder_path: path to folder to dedup
         @return: deduped files
         """
-        files = []
+        if db is None:
+            return []
+
         dups = []
-        if self.db is not None:
-            md5s = set(self.db.md5)
-            for file in Path(folder_path).rglob('*'):
-                if file.is_file():
-                    if md5(file.read_bytes()).hexdigest() not in md5s:
-                        files.append(file)
+        unique = []
+        md5s = set(db.md5)
+        files = [x for x in Path(path).rglob('*') if x.is_file()]
+
+        with ProcessPoolExecutor(max_workers=max_workers) as e:
+            fut = {e.submit(self._md5, file): file for file in files}
+            with tqdm(total=len(files), desc='Checking for duplicate files') as pbar:
+                for future in as_completed(fut):
+                    file, file_md5 = future.result()
+                    if file_md5 not in md5s:
+                        unique.append(file)
                     else:
                         dups.append(file)
-        else:
-            logger.warning('No database found. Checks for duplicate files will not be performed.')
-            files = list(Path(folder_path).rglob('*'))
-        logger.debug(f'{len(dups)} Duplicate files skipped')
-        return files
+                    pbar.update()
+        logger.info(f'{len(dups)} Duplicate files found')
+        logger.info(f'{len(unique)} Unique files found')
+        return unique
 
     def upload(self, path: str | Path, chunk_size=64 * 1024, refresh: bool = True, **kwargs) -> list[dict]:
         """
@@ -368,7 +382,7 @@ class AmazonPhotos:
 
         path = Path(path)
         folder_map, folders = self.create_folders(path)
-        files = self.dedup_files(path)
+        files = self.dedup_files(self.db, path)
         relmap = folder_relmap(path.name, files, folder_map)
         fns = (partial(post, pid=pid, file=file) for pid, file in relmap)
         res = asyncio.run(self.process(fns, desc='Uploading files', **kwargs))
