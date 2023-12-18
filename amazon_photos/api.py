@@ -309,7 +309,7 @@ class AmazonPhotos:
         logger.info(f'{len(unique)} Unique files found')
         return unique
 
-    def upload(self, path: str | Path, chunk_size=64 * 1024, refresh: bool = True, md5s: set[str] = None, **kwargs) -> list[dict]:
+    def upload(self, path: str | Path, md5s: set[str] = None, refresh: bool = True, chunk_size=64 * 1024, **kwargs) -> list[dict]:
         """
         Upload files to Amazon Photos
 
