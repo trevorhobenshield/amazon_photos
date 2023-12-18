@@ -282,7 +282,7 @@ class AmazonPhotos:
     def _md5(p):
         return p, md5(p.read_bytes()).hexdigest()
 
-    def dedup_files(self, db: pd.DataFrame, path: str | Path, max_workers=psutil.cpu_count(logical=False)) -> list[Path]:
+    def dedup_files(self, path: str | Path, md5s: set[str], max_workers=psutil.cpu_count(logical=False)) -> list[Path]:
         """
         Deduplicate all files in folder by comparing md5 against database md5
 
@@ -291,12 +291,8 @@ class AmazonPhotos:
         @param max_workers: max number of workers to use
         @return: deduped files
         """
-        if db is None:
-            return []
-
         dups = []
         unique = []
-        md5s = set(db.md5)
         files = [x for x in Path(path).rglob('*') if x.is_file()]
 
         with ProcessPoolExecutor(max_workers=max_workers) as e:
@@ -313,11 +309,12 @@ class AmazonPhotos:
         logger.info(f'{len(unique)} Unique files found')
         return unique
 
-    def upload(self, path: str | Path, chunk_size=64 * 1024, refresh: bool = True, **kwargs) -> list[dict]:
+    def upload(self, path: str | Path, chunk_size=64 * 1024, refresh: bool = True, md5s: set[str] = None, **kwargs) -> list[dict]:
         """
         Upload files to Amazon Photos
 
         @param path: path to folder to upload
+        @param md5s: set of file hashes to deduplicate against
         @param chunk_size: optional chunk size
         @param refresh: refresh database after upload
         @param kwargs: optional kwargs to pass to AsyncClient
@@ -368,7 +365,16 @@ class AmazonPhotos:
 
         path = Path(path)
         folder_map, folders = self.create_folders(path)
-        files = self.dedup_files(self.db, path)
+
+        if md5s:
+            files = self.dedup_files(path, md5s)
+        else:
+            if 'md5' in self.db.columns:
+                files = self.dedup_files(path, set(self.db.md5))
+            else:
+                logger.warning('`md5` column missing from database, skipping deduplication checks.')
+                files = (x for x in path.rglob('*') if x.is_file())
+
         relmap = folder_relmap(path.name, files, folder_map)
         fns = (partial(post, pid=pid, file=file) for pid, file in relmap)
         res = asyncio.run(self.process(fns, desc='Uploading files', **kwargs))
