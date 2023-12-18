@@ -78,7 +78,7 @@ class AmazonPhotos:
         )
         self.tmp = Path(tmp)
         self.tmp.mkdir(parents=True, exist_ok=True)
-        self.db_path = Path(db_path)
+        self.db_path = Path(db_path).expanduser()
         self.root = self.get_root()
         self.folders = self.get_folders()
         self.db = self.load_db(**kwargs)
