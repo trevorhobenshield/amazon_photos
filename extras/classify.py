@@ -114,26 +114,27 @@ def run(model_name: str,
     gen = enumerate(dl) if debug else tqdm(enumerate(dl), desc='eval', total=len(dataloader))
 
     with torch.no_grad():
-        for i, (inputs, idxs, files) in gen:
+        for i, (inp_batch, idx_batch, files) in gen:
             try:
-                outputs = model(inputs)
+                outputs = model(inp_batch)
                 files = list(map(Path, files))
                 seen = set()  # prevent dup copies to path_out
-                for j, (prob, idx) in enumerate(zip(*torch.topk(outputs.softmax(dim=1), k=topk))):
+                for j, (probs, idxs) in enumerate(zip(*torch.topk(outputs.softmax(dim=1), k=topk))):
                     path = files[j]
                     for k in range(topk):
-                        p = prob[k].item()
-                        l = labels[idx[k].item()]
+                        idx = idxs[k].item()
+                        prob = probs[k].item()
+                        label = labels[idx]
 
-                        if debug >= 1: logger.info(f'\t{p:<6.2f} {l:<{max_label_len}} ({path.name})')
-                        if exclude and exclude(l): continue
-                        if restrict and not restrict(l): continue
+                        if debug >= 1: logger.info(f'\t{prob:<6.2f} {label:<{max_label_len}} ({path.name})')
+                        if exclude and exclude(label): continue
+                        if restrict and not restrict(label): continue
 
-                        if p >= thresh and (path not in seen):
+                        if prob >= thresh and (path not in seen):
                             if map_idx >= 0:
-                                _dir = path_out / in1k_map[idx[k].item()][map_idx]
+                                _dir = path_out / in1k_map[idx][map_idx]
                             else:
-                                _dir = path_out / str(idx[k].item())
+                                _dir = path_out / str(idx)
                             if not _dir.exists():
                                 _dir.mkdir(parents=True, exist_ok=True)
 
