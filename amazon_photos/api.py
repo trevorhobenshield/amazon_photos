@@ -1046,7 +1046,7 @@ class AmazonPhotos:
                 if r.status_code < 300:
                     logger.debug(f'Folder created: {path.name}\t{r.status_code} {r.text}')
                 else:
-                    logger.error(f'Folder creation failed: {path.name}\t{r.status_code} {r.text}')
+                    logger.debug(f'Folder creation failed: {path.name}\t{r.status_code} {r.text}')
                 folder_data = r.json()
                 if get_id(folder_data):
                     return folder_data
