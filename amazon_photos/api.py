@@ -137,7 +137,7 @@ class AmazonPhotos:
                     if r.status_code == 401:  # BadAuthenticationData
                         logger.error(f'{r.status_code} {r.text}')
                         logger.error(f'Cookies expired. Log in to Amazon Photos and copy fresh cookies.')
-                        sys.exit(1)
+                        # sys.exit(1)
 
                     r.raise_for_status()
 
@@ -166,12 +166,12 @@ class AmazonPhotos:
                 if r.status_code == 400:  # malformed query
                     logger.error(f'{r.status_code} {r.text}')
                     logger.error(f'Incorrect query syntax. See readme for query language syntax.')
-                    sys.exit(1)
+                    # sys.exit(1) ## testing
 
                 if r.status_code == 401:  # "BadAuthenticationData"
                     logger.error(f'{r.status_code} {r.text}')
                     logger.error(f'Cookies expired. Log in to Amazon Photos and copy fresh cookies.')
-                    sys.exit(1)
+                    # sys.exit(1) ## testing
 
                 r.raise_for_status()
 
@@ -347,12 +347,12 @@ class AmazonPhotos:
 
                         if r.status_code == 400:
                             logger.error(f'{r.status_code} {r.text}')
-                            sys.exit(1)
+                            # sys.exit(1)
 
                         if r.status_code == 401:  # BadAuthenticationData
                             logger.error(f'{r.status_code} {r.text}')
                             logger.error(f'Cookies expired. Log in to Amazon Photos and copy fresh cookies.')
-                            sys.exit(1)
+                            # sys.exit(1)
                         r.raise_for_status()
                         return r
                 except Exception as e:
