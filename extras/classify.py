@@ -63,7 +63,7 @@ class CustomDataset(Dataset):
     def __init__(self, img_dir: Path, transform=None):
         self.image_folder = img_dir
         self.transform = transform
-        self.filenames = sorted([x for x in img_dir.rglob('*') if x.is_file()])
+        self.filenames = [x for x in img_dir.rglob('*') if x.is_file()]
 
     def __len__(self):
         return len(self.filenames)

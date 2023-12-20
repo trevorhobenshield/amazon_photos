@@ -1,5 +1,5 @@
 __title__ = "amazon-photos"
 __description__ = "Amazon Photos API"
-__version__ = "0.0.75"
+__version__ = "0.0.76"
 __author__ = "Trevor Hobenshield"
 __license__ = "MIT"
