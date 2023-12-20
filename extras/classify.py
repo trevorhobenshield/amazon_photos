@@ -135,6 +135,9 @@ def run(model_name: str,
                 logger.debug(f'Failed to classify batch: {files = }\t{e}')
 
 
+###############################################################
+# todo: produces many unintended duplicates, do not run
+###############################################################
 if __name__ == '__main__':
     run(
         'eva02_base_patch14_448.mim_in22k_ft_in22k_in1k',
