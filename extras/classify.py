@@ -118,32 +118,39 @@ def run(model_name: str,
             try:
                 outputs = model(inputs)
                 files = list(map(Path, files))
+                seen = set()  # prevent dup copies to path_out
                 for j, (prob, idx) in enumerate(zip(*torch.topk(outputs.softmax(dim=1), k=topk))):
+                    path = files[j]
                     for k in range(topk):
-                        if debug >= 1: logger.info(f'\t{prob[k].item():<6.2f} {labels[idx[k].item()]:<{max_label_len}} ({files[j].name})')
-                        if exclude and exclude(labels[idx[k].item()]): continue
-                        if restrict and not restrict(labels[idx[k].item()]): continue
-                        if prob[k].item() >= thresh:
+                        p = prob[k].item()
+                        l = labels[idx[k].item()]
+
+                        if debug >= 1: logger.info(f'\t{p:<6.2f} {l:<{max_label_len}} ({path.name})')
+                        if exclude and exclude(l): continue
+                        if restrict and not restrict(l): continue
+
+                        if p >= thresh and (path not in seen):
                             if map_idx >= 0:
                                 _dir = path_out / in1k_map[idx[k].item()][map_idx]
                             else:
                                 _dir = path_out / str(idx[k].item())
                             if not _dir.exists():
                                 _dir.mkdir(parents=True, exist_ok=True)
-                            shutil.copy2(files[j], _dir / files[j].name)
+
+                            seen.add(path)
+                            shutil.copy2(path, _dir / path.name)  # copy with metadata
+                    if debug >= 1: logger.info('')  # blank line for readability
+
             except Exception as e:
                 logger.debug(f'Failed to classify batch: {files = }\t{e}')
 
 
-###############################################################
-# todo: produces many unintended duplicates, do not run
-###############################################################
 if __name__ == '__main__':
     run(
         'eva02_base_patch14_448.mim_in22k_ft_in22k_in1k',
         path_in='images',
         path_out='labeled',
-        thresh=0.0,  # threshold for predictions, 0.9 means you only want very confident predictions
+        thresh=0.0,  # threshold for predictions, 0.9 means you want very confident predictions only
         topk=5,  # window of predictions to check if using exclude or restrict, if set to 1, only the top prediction will be checked
         exclude=lambda x: re.search('boat|ocean', x, flags=re.I),  # function to exclude classification of these predicted labels
         restrict=lambda x: re.search('sand|beach|sunset', x, flags=re.I),  # function to restrict classification to only these predicted labels
