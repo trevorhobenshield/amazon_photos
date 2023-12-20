@@ -267,7 +267,7 @@ class AmazonPhotos:
 
         offsets = range(offset, min(initial['count'], limit), MAX_LIMIT)
         fns = (partial(self.q, offset=o, filters=filters, limit=MAX_LIMIT) for o in offsets)
-        res.extend(asyncio.run(self.process(fns, desc='Getting media', **kwargs)))
+        res.extend(asyncio.run(self.process(fns, desc='Search nodes', **kwargs)))
         return format_nodes(pd.json_normalize(y for x in res for y in x.get('data', [])))
 
     def photos(self, **kwargs) -> list[dict] | pd.DataFrame:
@@ -1096,25 +1096,48 @@ class AmazonPhotos:
         res = asyncio.run(main(Path(path)))
         return folder_map, res
 
-    def refresh_db(self) -> pd.DataFrame:
+    def refresh_db_aggressive(self, **kwargs) -> pd.DataFrame:
+        now = datetime.now()
+        initial = self.backoff(
+            self.client.get,
+            f'{self.drive_url}/search',
+            params=self.base_params | {
+                "limit": MAX_LIMIT,
+                "offset": 0,
+                "filters": f'type:(PHOTOS OR VIDEOS) AND timeYear:({now.year}) AND timeMonth:({now.month}) AND timeDay:({now.day})',
+                "lowResThumbnail": "true",
+                "searchContext": "customer",
+                "sort": "['createdDate DESC']",
+            },
+        ).json()
+        res = [initial]
+        if initial['count'] <= MAX_LIMIT:
+            return format_nodes(pd.json_normalize(initial.get('data', [])))
+        offsets = range(0, min(initial['count'], math.inf), MAX_LIMIT)
+        filters = [
+            f'type:(PHOTOS OR VIDEOS) AND timeYear:({now.year}) AND timeMonth:({now.month}) AND timeDay:({now.day - 1})',
+            f'type:(PHOTOS OR VIDEOS) AND timeYear:({now.year}) AND timeMonth:({now.month}) AND timeDay:({now.day + 1})',
+        ]
+        fns = (partial(self.q, offset=o, filters=f, limit=MAX_LIMIT) for o in offsets for f in filters)
+        res.extend(asyncio.run(self.process(fns, desc='Search nodes', **kwargs)))
+        return format_nodes(pd.json_normalize(y for x in res for y in x.get('data', [])))
+
+    def refresh_db(self, filters: list[str] = None, **kwargs) -> pd.DataFrame:
         """
         Refresh database
         """
-        # todo: may be able to use finegrained node Range Query instead? although results may be limited to 9999 most recent nodes?
         logger.info(f'Refreshing db `{self.db_path}`')
-        now = datetime.now()
-        y, m, d = f'timeYear:({now.year})', f'timeMonth:({now.month})', f'timeDay:({now.day})'
-        ap_today = self.query(f'type:(PHOTOS OR VIDEOS) AND {y} AND {m} AND {d}')
-        y, m, d = f'timeYear:({now.year})', f'timeMonth:({now.month})', f'timeDay:({now.day + 1})'
-        ap_tomorrow = self.query(f'type:(PHOTOS OR VIDEOS) AND {y} AND {m} AND {d}')
+        if filters is None:
+            db = self.refresh_db_aggressive(**kwargs)
+        else:
+            db = self.nodes(filters=filters, **kwargs)
 
-        cols = set(ap_today.columns) | set(ap_tomorrow.columns) | set(self.db.columns)
+        cols = set(db.columns) | set(self.db.columns)
 
         # disgusting
         obj_dtype = np.dtypes.ObjectDType()
         df = pd.concat([
-            ap_today.reindex(columns=cols).astype(obj_dtype),
-            ap_tomorrow.reindex(columns=cols).astype(obj_dtype),
+            db.reindex(columns=cols).astype(obj_dtype),
             self.db.reindex(columns=cols).astype(obj_dtype),
         ]).drop_duplicates('id').reset_index(drop=True)
 
@@ -1164,6 +1187,8 @@ class AmazonPhotos:
                 'filters': filters,
             }
         )
+        if r is None:
+            return r
         initial = r.json()
         # small number of results, no need to paginate
         if initial['count'] <= MAX_LIMIT:
