@@ -21,7 +21,7 @@ def format_nodes(df: pd.DataFrame) -> pd.DataFrame | None:
     if df is None or df.empty:
         return df
     # .parquet format does not support cols with empty dicts, drop non-essential cols
-    df.drop(columns=['xAccntParentMap', 'assets', 'contentProperties.version'], inplace=True, errors='ignore')
+    df.drop(columns=['xAccntParentMap', 'xAccntParents', 'assets', 'contentProperties.version'], inplace=True, errors='ignore')
     # clean up col names and order important cols for readability
     df.columns = df.columns.str.replace('contentProperties.', '')
     cols = [

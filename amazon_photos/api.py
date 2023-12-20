@@ -147,7 +147,7 @@ class AmazonPhotos:
                     return r
             except Exception as e:
                 if i == max_retries:
-                    logger.warning(f'Max retries exceeded\n{e}')
+                    logger.debug(f'Max retries exceeded\n{e}')
                     return
                 t = min(random.random() * (b ** i), m)
                 logger.debug(f'Retrying in {f"{t:.2f}"} seconds\t\t{e}')
@@ -181,7 +181,7 @@ class AmazonPhotos:
                 return r
             except Exception as e:
                 if i == max_retries:
-                    logger.warning(f'Max retries exceeded\n{e}')
+                    logger.debug(f'Max retries exceeded\n{e}')
                     return
                 t = min(random.random() * (b ** i), m)
                 logger.debug(f'Retrying in {f"{t:.2f}"} seconds\t\t{e}')
@@ -261,14 +261,12 @@ class AmazonPhotos:
         res = [initial]
         # small number of results, no need to paginate
         if initial['count'] <= MAX_LIMIT:
-            # return dump(as_df, res, out)
-            return format_nodes(pd.DataFrame(initial.get('data', [])))
+            return format_nodes(pd.json_normalize(initial.get('data', [])))
 
         offsets = range(offset, min(initial['count'], limit), MAX_LIMIT)
         fns = (partial(self.q, offset=o, filters=filters, limit=MAX_LIMIT) for o in offsets)
         res.extend(asyncio.run(self.process(fns, desc='Getting media', **kwargs)))
-        # return dump(as_df, res, out)
-        return format_nodes(pd.DataFrame(y for x in res for y in x.get('data', [])))
+        return format_nodes(pd.json_normalize(y for x in res for y in x.get('data', [])))
 
     def photos(self, **kwargs) -> list[dict] | pd.DataFrame:
         """Convenience method to get all photos"""
@@ -382,7 +380,7 @@ class AmazonPhotos:
                         return r
                 except Exception as e:
                     if i == max_retries:
-                        logger.warning(f'Max retries exceeded\n{e}')
+                        logger.debug(f'Max retries exceeded\n{e}')
                         return
                     t = min(random.random() * (b ** i), m)
                     logger.debug(f'Retrying in {f"{t:.2f}"} seconds\t\t{e}')
@@ -475,8 +473,7 @@ class AmazonPhotos:
         res = [initial]
         # small number of results, no need to paginate
         if initial['count'] <= MAX_LIMIT:
-            # return dump(as_df, res, out)
-            return format_nodes(pd.DataFrame(initial.get('data', [])))
+            return format_nodes(pd.json_normalize(initial.get('data', [])))
 
         # see AWS error: E.g. "Offset + limit cannot be greater than 9999"
         # offset must be 9799 + limit of 200
@@ -486,8 +483,7 @@ class AmazonPhotos:
             offsets = range(offset, min(initial['count'], limit), MAX_LIMIT)
         fns = (partial(self._get_nodes, offset=o, filters=filters, limit=MAX_LIMIT) for o in offsets)
         res.extend(asyncio.run(self.process(fns, desc='Getting trashed nodes', **kwargs)))
-        # return dump(as_df, res, out)
-        return format_nodes(pd.DataFrame(y for x in res for y in x.get('data', [])))
+        return format_nodes(pd.json_normalize(y for x in res for y in x.get('data', [])))
 
     def trash(self, node_ids: list[str] | pd.Series, filters: str = '', **kwargs) -> list[dict]:
         """
