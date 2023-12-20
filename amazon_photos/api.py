@@ -307,31 +307,6 @@ class AmazonPhotos:
         logger.info(f'{len(unique)} Unique files found')
         return unique
 
-    def _fill_md5s(self, path: str | Path, max_workers=psutil.cpu_count(logical=False)) -> None:
-        """Fill missing MD5s if amazon doesn't return them"""
-        files = [x for x in Path(path).rglob('*') if x.is_file()]
-        md5_list = []
-        with ProcessPoolExecutor(max_workers=max_workers) as e:
-            fut = {e.submit(self._md5, file): file for file in files}
-            with tqdm(total=len(files), desc='mapping md5s to filenames') as pbar:
-                for future in as_completed(fut):
-                    file, file_md5 = future.result()
-                    md5_list.append([file.name, file_md5])
-                    pbar.update()
-
-        md5_df = pd.DataFrame(md5_list, columns=['name', 'md5'])
-        cols = set(md5_df.columns) | set(self.db.columns)
-
-        # todo: disgusting, must be a better way
-        obj_dtype = np.dtypes.ObjectDType()
-        df = pd.concat([
-            md5_df.reindex(columns=cols).astype(obj_dtype),
-            self.db.reindex(columns=cols).astype(obj_dtype),
-        ]).drop_duplicates('md5').reset_index(drop=True)
-        df = format_nodes(df)
-        df.to_parquet(self.db_path)
-        self.db = df
-
     def upload(self, path: str | Path, md5s: set[str] = None, refresh: bool = True, chunk_size=64 * 1024, **kwargs) -> list[dict]:
         """
         Upload files to Amazon Photos
@@ -401,8 +376,6 @@ class AmazonPhotos:
         relmap = folder_relmap(path.name, files, folder_map)
         fns = (partial(post, pid=pid, file=file) for pid, file in relmap)
         res = asyncio.run(self.process(fns, desc='Uploading files', **kwargs))
-
-        self._fill_md5s(path)  # update db md5s in case amazon doesn't return them
 
         if refresh:
             self.refresh_db()

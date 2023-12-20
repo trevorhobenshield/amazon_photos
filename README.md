@@ -113,6 +113,8 @@ ap = AmazonPhotos(
         'at-acbca': ...,
         'session-id': ...,
     },
+    # optionally cache all intermediate JSON responses
+    tmp='tmp',  
     # pandas options
     dtype_backend='pyarrow',
     engine='pyarrow',
