@@ -417,7 +417,7 @@ class AmazonPhotos:
         asyncio.run(self.process(fns, desc='Downloading media', **kwargs))
         return {'timestamp': time.time_ns(), 'nodes': node_ids}
 
-    def trashed(self, filters: str = '', offset: int = 0, limit: int = MAX_LIMIT, as_df: bool = True, out: str = 'trashed.json', **kwargs) -> list[dict]:
+    def trashed(self, filters: str = '', offset: int = 0, limit: int = MAX_LIMIT, sort: str = "['modifiedDate DESC']", **kwargs) -> list[dict]:
         """
         Get trashed nodes. Essentially a view your trash bin in Amazon Photos.
 
@@ -426,21 +426,17 @@ class AmazonPhotos:
         @param filters: filters to apply to query
         @param offset: offset to begin query
         @param limit: max number of results to return per query
-        @param as_df: return as pandas DataFrame
-        @param out: path to save results
+        @param sort: sort order
         @return: trashed nodes as a dict or DataFrame
         """
         initial = self.backoff(
             self.client.get,
             f'{self.drive_url}/trash',
-            params={
-                'sort': "['modifiedDate DESC']",
+            params=self.base_params | {
+                'sort': sort,
                 'limit': MAX_LIMIT,
                 'offset': offset,
                 'filters': filters or 'kind:(FILE* OR FOLDER*) AND status:(TRASH*)',
-                'resourceVersion': 'V2',
-                'ContentType': 'JSON',
-                '_': int(time.time_ns() // 1e6)
             },
         ).json()
         res = [initial]
@@ -454,7 +450,7 @@ class AmazonPhotos:
             offsets = MAX_NODE_OFFSETS
         else:
             offsets = range(offset, min(initial['count'], limit), MAX_LIMIT)
-        fns = (partial(self._get_nodes, offset=o, filters=filters, limit=MAX_LIMIT) for o in offsets)
+        fns = (partial(self._get_nodes, offset=o, filters=filters, limit=MAX_LIMIT, sort=sort) for o in offsets)
         res.extend(asyncio.run(self.process(fns, desc='Getting trashed nodes', **kwargs)))
         return format_nodes(pd.json_normalize(y for x in res for y in x.get('data', [])))
 
