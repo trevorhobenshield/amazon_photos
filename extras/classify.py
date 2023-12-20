@@ -130,7 +130,7 @@ def run(model_name: str,
                                 _dir = path_out / str(idx[k].item())
                             if not _dir.exists():
                                 _dir.mkdir(parents=True, exist_ok=True)
-                            shutil.copy(files[j], _dir / files[j].name)
+                            shutil.copy2(files[j], _dir / files[j].name)
             except Exception as e:
                 logger.debug(f'Failed to classify batch: {files = }\t{e}')
 
