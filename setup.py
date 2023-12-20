@@ -12,7 +12,12 @@ install_requires = [
     'orjson',
     'httpx[http2]',
     'pandas',
+    'psutil',
 ]
+
+extras_require = {
+    'extras': ['torch', 'torchvision', 'timm', 'Pillow'],
+}
 
 about = {}
 exec((Path().cwd() / 'amazon_photos' / '__version__.py').read_text(), about)
@@ -29,6 +34,7 @@ setup(
     author_email='trevorhobenshield@gmail.com',
     url='https://github.com/trevorhobenshield/amazon_photos',
     install_requires=install_requires,
+    extras_require=extras_require,
     keywords='amazon photos api async search automation',
     packages=find_packages(),
     include_package_data=True,
