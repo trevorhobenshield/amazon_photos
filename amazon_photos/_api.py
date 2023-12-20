@@ -163,9 +163,12 @@ class AmazonPhotos:
                     return r
 
                 if r.status_code == 400:  # malformed query
-                    logger.error(f'{r.status_code} {r.text}')
-                    logger.error(f'Incorrect query syntax. See readme for query language syntax.')
-                    # sys.exit(1) ## testing
+                    if r.json().get('message').startswith('Invalid filter:'):
+                        logger.error(f'{r.status_code} {r.text}\t\tSee readme for query language syntax.')
+                        return
+                    else:
+                        logger.error(f'{r.status_code} {r.text}')
+                        # sys.exit(1)
 
                 if r.status_code == 401:  # "BadAuthenticationData"
                     logger.error(f'{r.status_code} {r.text}')
