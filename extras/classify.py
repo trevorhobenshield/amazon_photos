@@ -148,6 +148,7 @@ def run(model_name: str,
 
 if __name__ == '__main__':
     run(
+        # for a list of current SOTA models, see https://www.hobenshield.com/stats/bench/index.html
         'eva02_base_patch14_448.mim_in22k_ft_in22k_in1k',
         path_in='images',
         path_out='labeled',

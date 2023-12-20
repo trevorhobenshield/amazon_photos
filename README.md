@@ -13,7 +13,6 @@
     * [Range Queries](#range-queries)
 * [Notes](#notes)
     * [Known File Types](#known-file-types)
-
 <!-- TOC -->
 
 > It is recommended to use this API in a [Jupyter Notebook](https://jupyter.org/install), as the results from most
@@ -55,7 +54,70 @@
 ## Installation
 
 ```bash
-pip install amazon-photos
+pip install amazon-photos -U
+```
+
+## (Optional) Custom Image Labeling
+
+Label your images into folders using state-of-the-art machine learning models. See: `extras/classify.py`
+
+```bash
+pip install amazon-photos[extras] -U
+```
+See the [Model List](https://www.hobenshield.com/stats/bench/index.html) for a list of all available models. 
+
+### Sample Models
+
+**Very Large**
+```
+eva02_base_patch14_448.mim_in22k_ft_in22k_in1k
+```
+
+**Large**
+```
+eva02_large_patch14_448.mim_m38m_ft_in22k_in1k
+```
+
+**Medium**
+```
+eva02_small_patch14_336.mim_in22k_ft_in1k
+vit_base_patch16_clip_384.laion2b_ft_in12k_in1k
+vit_base_patch16_clip_384.openai_ft_in12k_in1k
+caformer_m36.sail_in22k_ft_in1k_384
+```
+
+**Small**
+```
+eva02_tiny_patch14_336.mim_in22k_ft_in1k
+tiny_vit_5m_224.dist_in22k_ft_in1k
+edgenext_small.usi_in1k
+xcit_tiny_12_p8_384.fb_dist_in1k
+```
+
+
+
+
+
+```python
+run(
+    'eva02_base_patch14_448.mim_in22k_ft_in22k_in1k',
+    path_in='images',
+    path_out='labeled',
+    thresh=0.0,  # threshold for predictions, 0.9 means you want very confident predictions only
+    topk=5,  # window of predictions to check if using exclude or restrict, if set to 1, only the top prediction will be checked
+    exclude=lambda x: re.search('boat|ocean', x, flags=re.I),  # function to exclude classification of these predicted labels
+    restrict=lambda x: re.search('sand|beach|sunset', x, flags=re.I),  # function to restrict classification to only these predicted labels
+    dataloader_options={
+        'batch_size': 4,  # *** adjust ***
+        'shuffle': False,
+        'num_workers': psutil.cpu_count(logical=False),  # *** adjust ***
+        'pin_memory': True,
+    },
+    accumulate=False,  # accumulate results in path_out, if False, everything in path_out will be deleted before running again
+    device='cuda',
+    naming_style='name',  # use human-readable label names, optionally use the label index or synset
+    debug=0,
+)
 ```
 
 ## Setup

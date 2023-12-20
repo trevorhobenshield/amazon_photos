@@ -4,7 +4,6 @@ import math
 import os
 import platform
 import random
-import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
@@ -22,8 +21,8 @@ import psutil
 from httpx import AsyncClient, Client, Response, Limits
 from tqdm.asyncio import tqdm, tqdm_asyncio
 
-from .constants import *
-from .helpers import format_nodes, folder_relmap
+from ._constants import *
+from ._helpers import format_nodes, folder_relmap
 
 try:
     get_ipython()
@@ -47,7 +46,7 @@ logger = getLogger(list(Logger.manager.loggerDict)[-1])
 
 class AmazonPhotos:
     def __init__(self, *, tld: str = None, cookies: dict = None, db_path: str | Path = 'ap.parquet', tmp: str = '', **kwargs):
-        self.n_threads = len(os.sched_getaffinity(0))
+        self.n_threads = psutil.cpu_count(logical=True)
         self.tld = tld or self.determine_tld(cookies)
         self.drive_url = f'https://www.amazon.{self.tld}/drive/v1'
         self.cdn_url = 'https://content-na.drive.amazonaws.com/cdproxy/nodes'  # variant? 'https://content-na.drive.amazonaws.com/cdproxy/v1/nodes'
@@ -284,10 +283,10 @@ class AmazonPhotos:
         """
         Deduplicate all files in folder by comparing md5 against database md5
 
-        @param db: database
         @param path: path to folder to dedup
+        @param md5s: set of file hashes to deduplicate against
         @param max_workers: max number of workers to use
-        @return: deduped files
+        @return: list of unique file paths
         """
         dups = []
         unique = []
@@ -344,8 +343,12 @@ class AmazonPhotos:
                             return r
 
                         if r.status_code == 400:
-                            logger.error(f'{r.status_code} {r.text}')
-                            # sys.exit(1)
+                            if r.json().get('message').startswith('Invalid filter:'):
+                                logger.error(f'{r.status_code} {r.text}\t\tSee readme for query language syntax.')
+                                return
+                            else:
+                                logger.error(f'{r.status_code} {r.text}')
+                                # sys.exit(1)
 
                         if r.status_code == 401:  # BadAuthenticationData
                             logger.error(f'{r.status_code} {r.text}')
