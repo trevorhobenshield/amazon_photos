@@ -1,7 +1,12 @@
+from datetime import datetime
 from pathlib import Path
 from typing import Generator
 
 import pandas as pd
+
+
+def convert_ts(ts: float) -> str:
+    return datetime.utcfromtimestamp(ts).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def folder_relmap(root: str, files: Generator | list, folder_map: dict) -> list[tuple[str, str]]:

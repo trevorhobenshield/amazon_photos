@@ -22,7 +22,7 @@ from httpx import AsyncClient, Client, Response, Limits
 from tqdm.asyncio import tqdm, tqdm_asyncio
 
 from ._constants import *
-from ._helpers import format_nodes, folder_relmap
+from ._helpers import format_nodes, folder_relmap, convert_ts
 
 try:
     get_ipython()
@@ -367,6 +367,7 @@ class AmazonPhotos:
                     logger.debug(f'Retrying in {f"{t:.2f}"} seconds\t\t{e}')
                     await asyncio.sleep(t)
 
+        t0 = time.time()
         path = Path(path)
         folder_map, folders = self.create_folders(path)
 
@@ -381,10 +382,16 @@ class AmazonPhotos:
 
         relmap = folder_relmap(path.name, files, folder_map)
         fns = (partial(post, pid=pid, file=file) for pid, file in relmap)
+
         res = asyncio.run(self.process(fns, desc='Uploading files', **kwargs))
 
         if refresh:
             self.refresh_db()
+            ## todo: make sure tz correct, need to add multiple filters + pagination if upload is > MAX_NODES
+            # add some padding in case amazon disagrees with the timestamps
+            # ub_offset = 60 * 5
+            # lb_offset = 0
+            # self.refresh_db(filters=[f'createdDate:[{convert_ts(t0 - lb_offset)} TO {convert_ts(time.time() + ub_offset)}]'])
         return res
 
     def download(self, node_ids: list[str] | pd.Series, out: str = 'media', chunk_size: int = None, **kwargs) -> dict:
