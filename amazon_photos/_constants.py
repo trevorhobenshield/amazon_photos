@@ -6,6 +6,7 @@ MAX_DOWNLOAD_BATCH = 1200  # max nodes to batch into zip file for download
 MAX_NODES = 9999  # this is a real limit, not a large arbitrary number
 MAX_LIMIT = 200  # max number of nodes to return in a single request
 MAX_NODE_OFFSETS = [i * MAX_LIMIT for i in range(49)] + [MAX_NODES - MAX_LIMIT]
+AP_DATE_FMT = "%Y-%m-%dT%H:%M:%S.000Z"  # ISO 8601 with timezone offset
 
 Black = '\x1b[30m'
 Red = '\x1b[31m'

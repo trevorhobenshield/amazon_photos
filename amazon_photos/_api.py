@@ -49,7 +49,8 @@ class AmazonPhotos:
         self.n_threads = psutil.cpu_count(logical=True)
         self.tld = tld or self.determine_tld(cookies)
         self.drive_url = f'https://www.amazon.{self.tld}/drive/v1'
-        self.cdn_url = 'https://content-na.drive.amazonaws.com/cdproxy/nodes'  # variant? 'https://content-na.drive.amazonaws.com/cdproxy/v1/nodes'
+        self.cdproxy_url = 'https://content-na.drive.amazonaws.com/cdproxy/nodes'  # variant? 'https://content-na.drive.amazonaws.com/cdproxy/v1/nodes'
+        self.thumb_url = f'https://thumbnails-photos.amazon.ca/v1/thumbnail'  # /{node_id}?ownerId={ap.root["ownerId"]}&viewBox={width}'
         self.base_params = {
             'asset': 'ALL',
             'tempLink': 'false',
@@ -398,6 +399,9 @@ class AmazonPhotos:
         """
         Download files from Amazon Photos
 
+        This method has faster downloads and returns the filename in the response headers which makes things easier.
+        Alternatively self.cdproxy_url can be used, but additional requests are required to get the filename.
+
         @param node_ids: list of media node ids to download
         @param out: path to save files
         """
@@ -420,7 +424,7 @@ class AmazonPhotos:
                     async with client.stream('GET', url, params=params) as r:
                         content_disposition = dict([y for x in r.headers['content-disposition'].split('; ') if len((y := x.split('='))) > 1])
                         fname = content_disposition['filename'].strip('"')
-                        async with aiofiles.open(out / f"{node}_{fname}", 'wb') as fp:
+                        async with aiofiles.open(f"{out}/{node}_{fname}", 'wb') as fp:
                             async for chunk in r.aiter_bytes(chunk_size):
                                 await fp.write(chunk)
             except Exception as e:

@@ -4,9 +4,11 @@ from typing import Generator
 
 import pandas as pd
 
+from ._constants import AP_DATE_FMT
+
 
 def convert_ts(ts: float) -> str:
-    return datetime.utcfromtimestamp(ts).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    return datetime.utcfromtimestamp(ts).strftime(AP_DATE_FMT)
 
 
 def folder_relmap(root: str, files: Generator | list, folder_map: dict) -> list[tuple[str, str]]:
