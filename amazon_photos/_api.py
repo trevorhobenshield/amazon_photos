@@ -283,7 +283,7 @@ class AmazonPhotos:
     def _md5(p):
         return p, md5(p.read_bytes()).hexdigest()
 
-    def dedup_files(self, path: str | Path, md5s: set[str], max_workers=psutil.cpu_count(logical=False)) -> list[Path]:
+    def dedup_files(self, path: str | Path, md5s: set[str], max_workers=psutil.cpu_count(logical=False) // 2) -> list[Path]:
         """
         Deduplicate all files in folder by comparing md5 against database md5
 
