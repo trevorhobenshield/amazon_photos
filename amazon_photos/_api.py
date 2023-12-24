@@ -1218,6 +1218,17 @@ class AmazonPhotos:
             .reset_index(drop=True)
         )
 
+    def nodes_by_name(self, names: list[str] | pd.Series, **kwargs) -> pd.DataFrame | None:
+        if isinstance(names, pd.Series):
+            names = names.tolist()
+        fns = (partial(self._get_nodes, offset=0, filters=f'name:{name}', sort='', limit=1) for name in names)
+        res = asyncio.run(self.process(fns, desc='Node Query', **kwargs))
+        return format_nodes(
+            pd.json_normalize(y for x in res for y in x.get('data', []))
+            .drop_duplicates('id')
+            .reset_index(drop=True)
+        )
+
     async def _get_nodes(self, client: AsyncClient, sem: asyncio.Semaphore, filters: list[str], sort: list[str], limit: int, offset: int) -> dict:
         """
         Get Amazon Photos nodes
