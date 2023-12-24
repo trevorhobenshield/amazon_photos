@@ -1109,29 +1109,24 @@ class AmazonPhotos:
 
     def refresh_db_aggressive(self, **kwargs) -> pd.DataFrame:
         now = datetime.now()
-        initial = self.backoff(
-            self.client.get,
-            f'{self.drive_url}/search',
-            params=self.base_params | {
-                "limit": MAX_LIMIT,
-                "offset": 0,
-                "filters": f'type:(PHOTOS OR VIDEOS) AND timeYear:({now.year}) AND timeMonth:({now.month}) AND timeDay:({now.day})',
-                "lowResThumbnail": "true",
-                "searchContext": "customer",
-                "sort": "['createdDate DESC']",
-            },
-        ).json()
-        res = [initial]
-        if initial['count'] <= MAX_LIMIT:
-            return format_nodes(pd.json_normalize(initial.get('data', [])))
-        offsets = range(0, min(initial['count'], math.inf), MAX_LIMIT)
-        filters = [
-            f'type:(PHOTOS OR VIDEOS) AND timeYear:({now.year}) AND timeMonth:({now.month}) AND timeDay:({now.day - 1})',
-            f'type:(PHOTOS OR VIDEOS) AND timeYear:({now.year}) AND timeMonth:({now.month}) AND timeDay:({now.day + 1})',
-        ]
-        fns = (partial(self.q, offset=o, filters=f, limit=MAX_LIMIT) for o in offsets for f in filters)
-        res.extend(asyncio.run(self.process(fns, desc='Search nodes', **kwargs)))
-        return format_nodes(pd.json_normalize(y for x in res for y in x.get('data', [])))
+        ap_yesterday = self.query(f'type:(PHOTOS OR VIDEOS) AND timeYear:({now.year}) AND timeMonth:({now.month}) AND timeDay:({now.day - 1})')
+        ap_today = self.query(f'type:(PHOTOS OR VIDEOS) AND timeYear:({now.year}) AND timeMonth:({now.month}) AND timeDay:({now.day})')
+        ap_tomorrow = self.query(f'type:(PHOTOS OR VIDEOS) AND timeYear:({now.year}) AND timeMonth:({now.month}) AND timeDay:({now.day + 1})')
+        cols = set(ap_yesterday.columns) | set(ap_today.columns) | set(ap_tomorrow.columns) | set(self.db.columns)
+
+        # disgusting
+        obj_dtype = np.dtypes.ObjectDType()
+        df = pd.concat([
+            ap_today.reindex(columns=cols).astype(obj_dtype),
+            ap_tomorrow.reindex(columns=cols).astype(obj_dtype),
+            self.db.reindex(columns=cols).astype(obj_dtype),
+        ]).drop_duplicates('id').reset_index(drop=True)
+
+        df = format_nodes(df)
+
+        df.to_parquet(self.db_path)
+        self.db = df
+        return df
 
     def refresh_db(self, filters: list[str] = None, **kwargs) -> pd.DataFrame:
         """
