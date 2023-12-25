@@ -23,6 +23,12 @@
 > which can be neatly displayed and efficiently manipulated with vectorized ops. This becomes
 > increasingly important if you have "large" amounts of data (e.g. >1 million photos/videos).
 
+## Installation
+
+```bash
+pip install amazon-photos -U
+```
+
 ### Output Examples
 
 `ap.db`
@@ -55,12 +61,6 @@
     │   └── Desktop 
     └── DESKTOP-IJK 
         └── Desktop
-```
-
-## Installation
-
-```bash
-pip install amazon-photos -U
 ```
 
 ## Custom Image Labeling (Optional)
