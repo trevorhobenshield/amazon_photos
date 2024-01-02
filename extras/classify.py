@@ -1,13 +1,14 @@
+import logging
 import logging.config
 import re
 import shutil
-from logging import getLogger, Logger
+from collections.abc import Generator
 from pathlib import Path
 
-import psutil
 import timm
 import torch
 from PIL import Image
+from torch.nn import Module
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
@@ -25,81 +26,113 @@ logging.config.dictConfig({
         }
     },
     'handlers': {
-        'console': {
-            'class': 'logging.StreamHandler',
+        'file': {
+            'class': 'logging.FileHandler',
             'level': 'DEBUG',
+            'formatter': 'standard',
+            'filename': 'log.log',
+            'mode': 'a'
+        },
+        'console_warning': {
+            'class': 'logging.StreamHandler',
+            'level': 'WARNING',
             'formatter': 'standard'
         },
+        'console_info': {
+            'class': 'logging.StreamHandler',
+            'level': 'INFO',
+            'formatter': 'standard',
+            'filters': ['info_only']
+        }
+    },
+    'filters': {
+        'info_only': {
+            '()': lambda: lambda record: record.levelno == logging.INFO
+        }
     },
     'loggers': {
         'my_logger': {
-            'handlers': ['console'],
-            'level': 'DEBUG',
-            'propagate': False,
+            'handlers': ['file', 'console_warning', 'console_info'],
+            'level': 'DEBUG'
         }
     }
 })
-logger = getLogger(list(Logger.manager.loggerDict)[-1])
+logger = logging.getLogger(list(logging.Logger.manager.loggerDict)[-1])
 
 
 class DeviceMap:
     def __init__(self, dataloader: DataLoader, device: str = 'cuda'):
-        self._dataloader = dataloader
-        self._device = device
-
-    def _map(self, batch: tuple[torch.Tensor, torch.Tensor, str]) -> tuple[torch.Tensor, torch.Tensor, str]:
-        imgs, idxs, fnames = batch
-        return (
-            imgs.to(device=self._device),  # , memory_format=torch.channels_last, non_blocking=True),
-            idxs.to(device=self._device),  # , non_blocking=True),
-            fnames
-        )
+        self.dataloader = dataloader
+        self.device = device
 
     def __iter__(self):
-        return map(self._map, self._dataloader)
+        for imgs, fnames in self.dataloader:
+            yield imgs.to(self.device, non_blocking=True, memory_format=torch.contiguous_format), fnames
+
+    def __len__(self):
+        return len(self.dataloader)
 
 
 class CustomDataset(Dataset):
-    def __init__(self, img_dir: Path, transform=None):
-        self.image_folder = img_dir
+    def __init__(self, path_expr: Generator, transform: callable, device: str):
         self.transform = transform
-        self.filenames = [x for x in img_dir.rglob('*') if x.is_file()]
+        self.filenames = list(self._get_files(path_expr))
+        self.device = device
+
+    def _get_files(self, path_expr: Generator):
+        return (x for x in Path(path_expr).rglob('*') if x.is_file()) if isinstance(path_expr, (Path, str)) else path_expr
 
     def __len__(self):
         return len(self.filenames)
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, int, str]:
-        img_name = self.image_folder / self.filenames[idx]
-        img = Image.open(img_name)
-        if self.transform:
-            img = self.transform(img)
-        return img, idx, str(self.filenames[idx])
+    def __getitem__(self, idx: int):
+        img_name = self.filenames[idx]
+        try:
+            img = Image.open(img_name).convert('RGB')
+            img = self.transform(img) if self.transform else img
+            return img, str(img_name)
+        except Exception as e:
+            logger.error(f'Failed to load {img_name}: {e}')
+            return torch.zeros(3, *self._get_tfm_size(), device=self.device), ''
+
+    def _get_tfm_size(self):
+        for x in self.transform.transforms:
+            if hasattr(x, 'size') and isinstance(x.size, (tuple, list)):
+                return x.size
+        return 224, 224  # default size if not found in transforms
 
 
-def run(model_name: str,
-        path_in: str,
-        path_out: str,
-        thresh: float = 0.0,
-        device: str = 'cuda',
-        accumulate: bool = False,
-        naming_style: str = 'name',
-        exclude: callable = None,
-        restrict: callable = None,
-        topk: int = 1,
-        debug: int = 0,
-        **kwargs):
-    path_in, path_out = map(Path, (path_in, path_out))
-    if not accumulate and path_out.exists():
-        shutil.rmtree(path_out)
-    path_out.mkdir(parents=True, exist_ok=True)
-    labels = [v[1] for k, v in in1k_map.items()]
-    max_label_len = max(map(len, labels))
-    model = timm.create_model(model_name=model_name, pretrained=True).eval().to(device)
+def get_dataloader(path_expr: Generator, transform: Module, device: str, **kwargs):
+    ds = CustomDataset(path_expr, transform, device)
+    dl = DataLoader(ds, **kwargs)
+    return DeviceMap(dl, device)
 
+
+def get_timm_model(model_name: str, device: str, pretrained: bool = True):
+    model = timm.create_model(model_name, pretrained=pretrained).eval().to(device)
     cfg = timm.data.resolve_model_data_config(model)
     transform = timm.data.create_transform(**cfg)
-    dataset = CustomDataset(Path(path_in), transform=transform)
-    dataloader = DataLoader(dataset, **kwargs.pop('dataloader_options', {}))
+    return model, transform
+
+
+def run(model_name: str, path_in: str, path_out: str, **kwargs):
+    thresh = kwargs.pop('thresh', 0.9)
+    topk = kwargs.pop('topk', 5)
+    exclude = kwargs.pop('exclude', None)
+    restrict = kwargs.pop('restrict', None)
+    naming_style = kwargs.pop('naming_style', 'name')
+    debug = kwargs.pop('debug', 0)
+    dataloader_options = kwargs.pop('dataloader_options', {})
+    device = kwargs.pop('device', 'cuda')
+
+    path_in, path_out = map(Path, (path_in, path_out))
+    if not path_out.exists():
+        path_out.mkdir(parents=True, exist_ok=True)
+    labels = [v[1] for k, v in in1k_map.items()]
+    max_label_len = max(map(len, labels))
+
+    model, transform = get_timm_model(model_name, device)
+    dataloader = get_dataloader(path_in, transform, device, **dataloader_options)
 
     if naming_style == 'index':
         map_idx = -1
@@ -110,17 +143,14 @@ def run(model_name: str,
     else:
         map_idx = 1
 
-    dl = DeviceMap(dataloader, device=device)
-    gen = enumerate(dl) if debug else tqdm(enumerate(dl), desc='eval', total=len(dataloader))
-
     with torch.no_grad():
-        for i, (inp_batch, idx_batch, files) in gen:
+        for i, (batch, fnames) in tqdm(enumerate(dataloader), desc='eval', total=len(dataloader)):
             try:
-                outputs = model(inp_batch)
-                files = list(map(Path, files))
+                outputs = model(batch)
+                fnames = list(map(Path, fnames))
                 seen = set()  # prevent dup copies to path_out
                 for j, (probs, idxs) in enumerate(zip(*torch.topk(outputs.softmax(dim=1), k=topk))):
-                    path = files[j]
+                    path = fnames[j]
                     for k in range(topk):
                         idx = idxs[k].item()
                         prob = probs[k].item()
@@ -143,23 +173,22 @@ def run(model_name: str,
                     if debug >= 1: logger.info('')  # blank line for readability
 
             except Exception as e:
-                logger.debug(f'Failed to classify batch: {files = }\t{e}')
+                logger.debug(f'Failed to classify batch: {fnames = }\t{e}')
 
 
 if __name__ == '__main__':
     run(
-        # for a list of current SOTA models, see https://www.hobenshield.com/stats/bench/index.html
-        'eva02_base_patch14_448.mim_in22k_ft_in22k_in1k',
+        model_name='vit_base_patch16_clip_384.laion2b_ft_in12k_in1k',
         path_in='images',
-        path_out='labeled',
+        path_out='images_labeled',
         thresh=0.0,  # threshold for predictions, 0.9 means you want very confident predictions only
         topk=5,  # window of predictions to check if using exclude or restrict, if set to 1, only the top prediction will be checked
         exclude=lambda x: re.search('boat|ocean', x, flags=re.I),  # function to exclude classification of these predicted labels
-        restrict=lambda x: re.search('sand|beach|sunset', x, flags=re.I),  # function to restrict classification to only these predicted labels
+        restrict=lambda x: re.search('sandbar|beach_wagon', x, flags=re.I),  # function to restrict classification to only these predicted labels
         dataloader_options={
-            'batch_size': 4,  # *** adjust this ***
+            'batch_size': 32,  # *** adjust this ***
             'shuffle': False,
-            'num_workers': psutil.cpu_count(logical=False),  # *** adjust this ***
+            'num_workers': 4,  # *** adjust this ***
             'pin_memory': True,
         },
         accumulate=False,  # accumulate results in path_out, if False, everything in path_out will be deleted before running again
