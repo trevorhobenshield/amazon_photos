@@ -48,6 +48,13 @@ class AmazonPhotos:
     def __init__(self, *, tld: str = None, cookies: dict = None, db_path: str | Path = 'ap.parquet', tmp: str = '', **kwargs):
         self.n_threads = psutil.cpu_count(logical=True)
         self.tld = tld or self.determine_tld(cookies)
+        if self.tld == 'com':
+            self.cookie_name_ubid = 'ubid_main'
+            self.cookie_name_at = 'at_main'
+        else:
+            self.cookie_name_ubid = f'ubid-acb{self.tld}'
+            self.cookie_name_at = f'at-acb{self.tld}'
+            
         self.drive_url = f'https://www.amazon.{self.tld}/drive/v1'
         self.cdproxy_url = 'https://content-na.drive.amazonaws.com/cdproxy/nodes'  # variant? 'https://content-na.drive.amazonaws.com/cdproxy/v1/nodes'
         self.thumb_url = f'https://thumbnails-photos.amazon.ca/v1/thumbnail'  # /{node_id}?ownerId={ap.root["ownerId"]}&viewBox={width}'
@@ -71,8 +78,8 @@ class AmazonPhotos:
                 'x-amzn-sessionid': cookies.get('session-id') if cookies else os.getenv('session_id'),
             },
             cookies=cookies or {
-                f'ubid-acb{tld}': os.getenv(f'ubid_acb{tld}'),
-                f'at-acb{tld}': os.getenv(f'at_acb{tld}'),
+                self.cookie_name_ubid: os.getenv(self.cookie_name_ubid),
+                self.cookie_name_at: os.getenv(self.cookie_name_at),
                 'session-id': os.getenv('session_id'),
             }
         )
@@ -92,7 +99,9 @@ class AmazonPhotos:
         @return: top-level domain
         """
         for k, v in cookies.items():
-            if k.startswith(x := 'at-acb'):
+            if k == 'at-main':
+                return 'com'
+            elif k.startswith(x := 'at-acb'):
                 return k.split(x)[-1]
 
     async def process(self, fns: Generator, max_connections: int = None, **kwargs):
