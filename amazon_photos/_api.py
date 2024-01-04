@@ -1,7 +1,6 @@
 import asyncio
 import logging.config
 import math
-import os
 import platform
 import random
 import time
@@ -22,7 +21,7 @@ from httpx import AsyncClient, Client, Response, Limits
 from tqdm.asyncio import tqdm, tqdm_asyncio
 
 from ._constants import *
-from ._helpers import format_nodes, folder_relmap, convert_ts
+from ._helpers import format_nodes, folder_relmap
 
 try:
     get_ipython()
@@ -45,12 +44,12 @@ logger = getLogger(list(Logger.manager.loggerDict)[-1])
 
 
 class AmazonPhotos:
-    def __init__(self, *, tld: str = None, cookies: dict = None, db_path: str | Path = 'ap.parquet', tmp: str = '', **kwargs):
+    def __init__(self, cookies: dict, db_path: str | Path = 'ap.parquet', tmp: str = '', **kwargs):
         self.n_threads = psutil.cpu_count(logical=True)
-        self.tld = tld or self.determine_tld(cookies)
+        self.tld = self.determine_tld(cookies)
         self.drive_url = f'https://www.amazon.{self.tld}/drive/v1'
-        self.cdproxy_url = 'https://content-na.drive.amazonaws.com/cdproxy/nodes'  # variant? 'https://content-na.drive.amazonaws.com/cdproxy/v1/nodes'
-        self.thumb_url = f'https://thumbnails-photos.amazon.ca/v1/thumbnail'  # /{node_id}?ownerId={ap.root["ownerId"]}&viewBox={width}'
+        self.cdproxy_url = f'https://content-na.drive.amazonaws.{self.tld}/cdproxy/nodes'  # variant? 'https://content-na.drive.amazonaws.com/cdproxy/v1/nodes'
+        self.thumb_url = f'https://thumbnails-photos.amazon.{self.tld}/v1/thumbnail'  # /{node_id}?ownerId={ap.root["ownerId"]}&viewBox={width}'
         self.base_params = {
             'asset': 'ALL',
             'tempLink': 'false',
@@ -68,13 +67,9 @@ class AmazonPhotos:
             timeout=60,
             headers={
                 'user-agent': random.choice(USER_AGENTS),
-                'x-amzn-sessionid': cookies.get('session-id') if cookies else os.getenv('session_id'),
+                'x-amzn-sessionid': cookies['session-id'],
             },
-            cookies=cookies or {
-                f'ubid-acb{tld}': os.getenv(f'ubid_acb{tld}'),
-                f'at-acb{tld}': os.getenv(f'at_acb{tld}'),
-                'session-id': os.getenv('session_id'),
-            }
+            cookies=cookies
         )
         self.tmp = Path(tmp)
         self.tmp.mkdir(parents=True, exist_ok=True)
@@ -92,6 +87,8 @@ class AmazonPhotos:
         @return: top-level domain
         """
         for k, v in cookies.items():
+            if k.endswith('_main'):
+                return 'com'
             if k.startswith(x := 'at-acb'):
                 return k.split(x)[-1]
 
