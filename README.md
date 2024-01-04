@@ -136,10 +136,10 @@ ap = AmazonPhotos(
 # get current usage stats
 ap.usage()
 
-# get entire Amazon Photos library. (default save to `ap.parquet`)
+# get entire Amazon Photos library
 nodes = ap.query("type:(PHOTOS OR VIDEOS)")
 
-# query Amazon Photos library with more filters applied. (default save to `ap.parquet`)
+# query Amazon Photos library with more filters applied
 nodes = ap.query("type:(PHOTOS OR VIDEOS) AND things:(plant AND beach OR moon) AND timeYear:(2023) AND timeMonth:(8) AND timeDay:(14) AND location:(CAN#BC#Vancouver)")
 
 # sample first 10 nodes
@@ -151,7 +151,7 @@ ap.trash(node_ids)
 # get trash bin contents
 ap.trashed()
 
-# permanently delete a batch of images/videos.
+# permanently delete a batch of images/videos
 ap.delete(node_ids)
 
 # restore a batch of images/videos from the trash bin
