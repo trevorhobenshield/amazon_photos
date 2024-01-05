@@ -318,6 +318,8 @@ class AmazonPhotos:
         @param kwargs: optional kwargs to pass to AsyncClient
         @return: upload response
         """
+        max_workers = kwargs.pop('max_workers', self.n_threads // 2)
+        skip_dedup = kwargs.pop('skip_dedup', False)
 
         async def stream_bytes(file: Path) -> bytes:
             async with aiofiles.open(file, 'rb') as f:
@@ -365,15 +367,17 @@ class AmazonPhotos:
                     logger.debug(f'Retrying in {f"{t:.2f}"} seconds\t\t{e}')
                     await asyncio.sleep(t)
 
-        t0 = time.time()
+        # t0 = time.time()
         path = Path(path)
         folder_map, folders = self.create_folders(path)
 
-        if md5s:
-            files = self.dedup_files(path, md5s)
+        if skip_dedup:
+            files = (x for x in path.rglob('*') if x.is_file())
+        elif md5s:
+            files = self.dedup_files(path, md5s, max_workers)
         else:
             if 'md5' in self.db.columns:
-                files = self.dedup_files(path, set(self.db.md5))
+                files = self.dedup_files(path, set(self.db.md5), max_workers)
             else:
                 logger.warning('`md5` column missing from database, skipping deduplication checks.')
                 files = (x for x in path.rglob('*') if x.is_file())
