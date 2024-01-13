@@ -48,7 +48,7 @@ class AmazonPhotos:
         self.n_threads = psutil.cpu_count(logical=True)
         self.tld = self.determine_tld(cookies)
         self.drive_url = f'https://www.amazon.{self.tld}/drive/v1'
-        self.cdproxy_url = f'https://content-na.drive.amazonaws.{self.tld}/cdproxy/nodes'  # variant? 'https://content-na.drive.amazonaws.com/cdproxy/v1/nodes'
+        self.cdproxy_url = self.determine_cdproxy(kwargs.pop('cdproxy_override', None))
         self.thumb_url = f'https://thumbnails-photos.amazon.{self.tld}/v1/thumbnail'  # /{node_id}?ownerId={ap.root["ownerId"]}&viewBox={width}'
         self.base_params = {
             'asset': 'ALL',
@@ -91,6 +91,19 @@ class AmazonPhotos:
                 return 'com'
             if k.startswith(x := 'at-acb'):
                 return k.split(x)[-1]
+
+    def determine_cdproxy(self, override: str = None):
+        """
+        Determine cdproxy url based on tld
+        """
+        # NA variant? https://content-na.drive.amazonaws.com/cdproxy/v1/nodes
+        # EU variant? https://content-eu.drive.amazonaws.com/v2/upload
+        if override:
+            return override
+        if self.tld in NORTH_AMERICA_TLD_MAP:
+            return 'https://content-na.drive.amazonaws.com/cdproxy/nodes'
+        elif self.tld in EUROPEAN_TLD_MAP:
+            return f'https://content-eu.drive.amazonaws.{self.tld}/cdproxy/nodes'
 
     async def process(self, fns: Generator, max_connections: int = None, **kwargs):
         """
@@ -331,7 +344,8 @@ class AmazonPhotos:
                 try:
                     async with sem:
                         r = await client.post(
-                            f'https://content-na.drive.amazonaws.com/cdproxy/nodes',
+                            self.cdproxy_url,
+                            # f'https://content-na.drive.amazonaws.com/cdproxy/nodes',
                             data=stream_bytes(file),
                             params={
                                 'name': file.name,

@@ -70,3 +70,43 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/117.",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.",
 ]
+
+NORTH_AMERICA_TLD_MAP = {
+    "ca": "Canada",
+    "com": "United States",
+}
+
+EUROPEAN_TLD_MAP = {
+    "at": "Austria",
+    "be": "Belgium",
+    "bg": "Bulgaria",
+    "hr": "Croatia",
+    "ch": "Switzerland",  # todo
+    "cy": "Cyprus",
+    "cz": "Czech Republic",
+    "dk": "Denmark",
+    "ee": "Estonia",
+    "fi": "Finland",
+    "fr": "France",
+    "de": "Germany",
+    "gr": "Greece",
+    "hu": "Hungary",
+    "is": "Iceland",  # todo
+    "ie": "Ireland",
+    "it": "Italy",
+    "li": "Liechtenstein",  # todo
+    "lv": "Latvia",
+    "lt": "Lithuania",
+    "lu": "Luxembourg",
+    "mt": "Malta",
+    "no": "Norway",  # todo
+    "nl": "Netherlands",
+    "pl": "Poland",
+    "pt": "Portugal",
+    "ro": "Romania",
+    "sk": "Slovakia",
+    "si": "Slovenia",
+    "es": "Spain",
+    "se": "Sweden",
+    "uk": "United Kingdom",
+}
