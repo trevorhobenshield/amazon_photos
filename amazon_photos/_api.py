@@ -106,7 +106,7 @@ class AmazonPhotos:
         if self.tld in NORTH_AMERICA_TLD_MAP:
             return 'https://content-na.drive.amazonaws.com/cdproxy/nodes'
         elif self.tld in EUROPEAN_TLD_MAP:
-            return f'https://content-eu.drive.amazonaws.{self.tld}/cdproxy/nodes'
+            return f'https://content-eu.drive.amazonaws.com/cdproxy/nodes'
 
     async def process(self, fns: Generator, max_connections: int = None, **kwargs):
         """
