@@ -95,6 +95,9 @@ class AmazonPhotos:
     def determine_cdproxy(self, override: str = None):
         """
         Determine cdproxy url based on tld
+
+        @param override: override cdproxy url
+        @return: cdproxy url
         """
         # NA variant? https://content-na.drive.amazonaws.com/cdproxy/v1/nodes
         # EU variant? https://content-eu.drive.amazonaws.com/v2/upload
