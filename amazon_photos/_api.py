@@ -968,7 +968,7 @@ class AmazonPhotos:
             for task in tasks:
                 task.cancel()
             results = await asyncio.gather(*tasks, return_exceptions=True)
-            return [y for x in results if x for y in x]
+            return [y for x in results if isinstance(x, list) for y in x]
 
         folders = asyncio.run(main([{'id': self.root['id']}]))
         return folders
