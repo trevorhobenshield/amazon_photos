@@ -87,7 +87,7 @@ class AmazonPhotos:
         @return: top-level domain
         """
         for k, v in cookies.items():
-            if k.endswith('_main'):
+            if k.endswith('main'):
                 return 'com'
             if k.startswith(x := 'at-acb'):
                 return k.split(x)[-1]
