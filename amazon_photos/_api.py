@@ -294,7 +294,11 @@ class AmazonPhotos:
 
     @staticmethod
     def _md5(p):
-        return p, md5(p.read_bytes()).hexdigest()
+        hash_md5 = md5()
+        with p.open("rb") as f:
+            for chunk in iter(lambda: f.read(1024*1024), b""):
+                hash_md5.update(chunk)
+        return p, hash_md5.hexdigest()
 
     def dedup_files(self, path: str | Path, md5s: set[str], max_workers=psutil.cpu_count(logical=False) // 2) -> list[Path]:
         """
