@@ -47,7 +47,7 @@ class AmazonPhotos:
     def __init__(self, cookies: dict, db_path: str | Path = 'ap.parquet', tmp: str = '', **kwargs):
         self.n_threads = psutil.cpu_count(logical=True)
         self.tld = self.determine_tld(cookies)
-        self.drive_url = f'https://www.amazon.{self.tld}/drive/v1'
+        self.drive_url = self.determine_drive(kwargs.pop('drive_override', None))
         self.cdproxy_url = self.determine_cdproxy(kwargs.pop('cdproxy_override', None))
         self.thumb_url = f'https://thumbnails-photos.amazon.{self.tld}/v1/thumbnail'  # /{node_id}?ownerId={ap.root["ownerId"]}&viewBox={width}'
         self.base_params = {
@@ -91,6 +91,19 @@ class AmazonPhotos:
                 return 'com'
             if k.startswith(x := 'at-acb'):
                 return k.split(x)[-1]
+
+    def determine_drive(self, override: str = None):
+        """
+        Determine drive url based on tld
+
+        @param override: override drive url
+        @return: drive url
+        """
+        if override:
+            return override
+
+        tld = TLD_EXCEPTIONS.get(self.tld, self.tld)
+        return f'https://www.amazon.{tld}/drive/v1'
 
     def determine_cdproxy(self, override: str = None):
         """
