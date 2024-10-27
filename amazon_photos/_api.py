@@ -89,7 +89,9 @@ class AmazonPhotos:
         for k, v in cookies.items():
             if k.endswith('_main'):
                 return 'com'
-            if k.startswith(x := 'at-acb'):
+            elif k == 'at-acbjp':
+                return 'co.jp'
+            elif k.startswith(x := 'at-acb'):
                 return k.split(x)[-1]
 
     def determine_cdproxy(self, override: str = None):
@@ -103,10 +105,12 @@ class AmazonPhotos:
         # EU variant? https://content-eu.drive.amazonaws.com/v2/upload
         if override:
             return override
-        if self.tld in NORTH_AMERICA_TLD_MAP:
+        elif self.tld in NORTH_AMERICA_TLD_MAP:
             return 'https://content-na.drive.amazonaws.com/cdproxy/nodes'
         elif self.tld in EUROPEAN_TLD_MAP:
-            return f'https://content-eu.drive.amazonaws.com/cdproxy/nodes'
+            return 'https://content-eu.drive.amazonaws.com/cdproxy/nodes'
+        elif self.tld == 'co.jp':
+            return 'https://content-jp.drive.amazonaws.com/cdproxy/nodes'
 
     async def process(self, fns: Generator, max_connections: int = None, **kwargs):
         """
