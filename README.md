@@ -29,6 +29,125 @@
 pip install amazon-photos -U
 ```
 
+## Web Application for Photo Management
+
+This project also includes a web-based interface for managing your Amazon Photos, allowing you to download your photos and view them in a gallery.
+
+### Setup for Web App
+
+1.  **Clone the Repository:**
+    If you haven't already, clone this repository to your local machine.
+    ```bash
+    git clone <repository-url>
+    cd <repository-directory>
+    ```
+
+2.  **Install Dependencies:**
+    Ensure you have Python installed. Then, install the necessary dependencies using the `requirements.txt` file:
+    ```bash
+    pip install -r requirements.txt
+    ```
+    This will install `fastapi`, `uvicorn`, the `amazon-photos` library itself, and other necessary packages.
+
+### Running the Web App
+
+1.  **Start the Server:**
+    Navigate to the directory containing `main.py` (the root of this project) and run the following command:
+    ```bash
+    uvicorn main:app --reload
+    ```
+2.  **Access the Web Interface:**
+    Open your web browser and go to:
+    ```
+    http://127.0.0.1:8000/
+    ```
+    (Note: `127.0.0.1` is the standard IP address for localhost.)
+
+### Obtaining Cookies for the Web App
+
+The web application requires your Amazon Photos session cookies to interact with your account. You'll need to provide these in a JSON format.
+
+1.  **Log in to Amazon Photos:** Open your web browser and log in to your Amazon Photos account (e.g., `https://www.amazon.com/photos/`, `https://www.amazon.co.uk/photos/`, etc.).
+2.  **Open Developer Tools:**
+    *   Right-click anywhere on the page and select "Inspect" or "Inspect Element".
+    *   Alternatively, use keyboard shortcuts (e.g., `Ctrl+Shift+I` or `Cmd+Option+I`).
+3.  **Find Your Cookies:**
+    *   Go to the "Application" tab (in Chrome/Edge) or "Storage" tab (in Firefox).
+    *   Under the "Cookies" section on the left, find the domain for Amazon Photos (e.g., `www.amazon.com`).
+    *   You are looking for specific cookie names like `session-id`, and region-specific `ubid-*` and `at-*` cookies.
+    *   Alternatively, you can use the "Network" tab. Refresh the Amazon Photos page, click on one of the requests made to the Amazon Photos domain, and look for the `Cookie` header in the "Headers" section.
+4.  **Format as JSON:**
+    Copy the required cookie names and their corresponding values into a JSON structure like the example below. Paste this JSON into the "Set Cookies" text area in the web application.
+
+    **JSON Cookie Example:**
+    ```json
+    {
+      "session-id": "your-session-id-value-here",
+      "ubid-main": "your-ubid-main-value-here",
+      "at-main": "your-at-main-value-here"
+    }
+    ```
+    **Important:**
+    *   The example above (`ubid-main`, `at-main`) is for users of `amazon.com`.
+    *   If you use a different Amazon domain (e.g., `.ca`, `.co.uk`, `.de`), you will need to use the region-specific cookie names. For example, for `amazon.ca`, you would use `ubid-acbca` and `at-acbca`.
+    *   Please refer to the **"Setup"** section below for a more comprehensive list of regional cookie names. The same cookie names apply; you just need to format them into the JSON structure shown.
+
+### Using the Interface
+
+1.  **Set Cookies:** Paste the JSON formatted cookies into the text area and click "Save Cookies".
+2.  **Start Download:** Click "Start Download" to begin downloading your photo and video metadata and then the files themselves.
+3.  **Monitor Progress:** Download progress will be displayed.
+4.  **View Gallery:** Once downloads are complete (or partially complete), click "Refresh Gallery" to view your media. Use the "Previous" and "Next" buttons to navigate through your gallery.
+
+### Running with Docker
+
+Alternatively, you can run the web application using Docker. This encapsulates the application and its dependencies in a container.
+
+**1. Prerequisites:**
+*   Ensure you have Docker installed on your system.
+
+**2. Building the Docker Image:**
+*   Navigate to the root directory of the project (where the `Dockerfile` is located).
+*   Run the following command to build the Docker image:
+    ```bash
+    docker build -t amazon-photos-web .
+    ```
+
+**3. Running the Docker Container:**
+*   To run the container, you'll want to mount volumes from your host machine into the container. This is crucial for:
+    *   Persisting the downloaded media: The `media_downloads` directory where photos and videos are saved.
+    *   Persisting the application's database: The `ap.parquet` file which stores metadata.
+*   Use the following command to run the container:
+    ```bash
+    docker run -d \
+      -p 8000:8000 \
+      -v ./media_downloads:/app/media_downloads \
+      -v ./ap.parquet:/app/ap.parquet \
+      --name amazon-photos-app \
+      amazon-photos-web
+    ```
+    *   **Explanation of the command:**
+        *   `-d`: Runs the container in detached mode (in the background).
+        *   `-p 8000:8000`: Maps port 8000 on your host machine to port 8000 in the container.
+        *   `-v ./media_downloads:/app/media_downloads`: Mounts the local `./media_downloads` directory (create this directory if it doesn't exist) into the `/app/media_downloads` directory inside the container. The application saves downloaded files here.
+        *   `-v ./ap.parquet:/app/ap.parquet`: Mounts a local file named `ap.parquet` into `/app/ap.parquet` inside the container.
+            *   **Note on `ap.parquet`:** If `ap.parquet` does not exist locally before running the `docker run` command, Docker might create it as a directory, which can cause issues. It's best to ensure an empty `ap.parquet` file exists locally first (e.g., by running `touch ap.parquet` on Linux/macOS or creating an empty file on Windows) or after the first run of the application (without Docker) which would generate it. The application expects this path for its database.
+        *   `--name amazon-photos-app`: Assigns a memorable name to your container.
+        *   `amazon-photos-web`: Specifies the Docker image to use (the one you built earlier).
+
+*   **Accessing the Application:**
+    Once the container is running, you can access the web application in your browser at `http://localhost:8000`.
+
+**4. Stopping and Removing the Container (Optional):**
+*   To stop the container:
+    ```bash
+    docker stop amazon-photos-app
+    ```
+*   To remove the container (after it's stopped):
+    ```bash
+    docker rm amazon-photos-app
+    ```
+
 ### Output Examples
 
 `ap.db`
@@ -66,9 +185,9 @@ pip install amazon-photos -U
 ## Setup
 
 > [Update] Jan 04 2024: To avoid confusion, setting env vars is no longer supported. One must pass cookies directly as
-> shown below.
+> shown below for direct library use, or formatted as JSON for the Web Application (see details in the "Web Application for Photo Management" section above).
 
-Log in to Amazon Photos and copy the following cookies:
+The following cookie names are required. Log in to Amazon Photos and copy these cookies from your browser's developer tools:
 
 - `session-id`
 - `ubid`*

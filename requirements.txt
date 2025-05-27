@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+pandas
+httpx
+aiofiles
+orjson
+numpy
+psutil

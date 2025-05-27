@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Amazon Photos Downloader</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background-color: #f4f4f4; color: #333; }
+        .container { background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        h1, h2 { color: #555; }
+        textarea { width: 98%; min-height: 80px; margin-bottom: 10px; padding: 10px; border: 1px solid #ddd; border-radius: 4px; }
+        button { padding: 10px 15px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; margin-right: 10px; }
+        button:hover { background-color: #0056b3; }
+        #progressArea, #galleryArea, #notifications { margin-top: 20px; padding: 10px; border: 1px solid #eee; border-radius: 4px; background-color: #e9ecef; }
+        #galleryArea img { width: 150px; height: 150px; object-fit: cover; margin: 5px; border: 1px solid #ddd; border-radius: 4px; }
+        .error { color: red; font-weight: bold; }
+        .success { color: green; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Amazon Photos Downloader</h1>
+
+        <div id="notifications"></div>
+
+        <h2>1. Set Cookies</h2>
+        <textarea id="cookieJson" placeholder="Paste your Amazon Photos cookies here (JSON format)"></textarea>
+        <button onclick="saveCookies()">Save Cookies</button>
+
+        <h2>2. Download Photos</h2>
+        <button onclick="startDownload()">Start Download</button>
+        <div id="progressArea">Download progress will appear here...</div>
+
+        <h2>3. Photo Gallery</h2>
+        <div id="galleryArea">Photos will appear here after download and refresh...</div>
+        <div id="galleryPagination" style="margin-top: 10px; text-align: center;">
+            <!-- Pagination buttons will be added here by JavaScript -->
+        </div>
+        <button onclick="refreshGalleryFirstPage()">Refresh Gallery</button> <!-- Modified onclick -->
+    </div>
+
+    <script>
+        const notificationsDiv = document.getElementById('notifications');
+        const progressAreaDiv = document.getElementById('progressArea');
+        const galleryAreaDiv = document.getElementById('galleryArea');
+
+        let currentGalleryOffset = 0;
+        const galleryLimit = 20; // Number of items per page
+
+        // Create buttons globally to manage their state easily
+        const prevButton = document.createElement('button');
+        prevButton.textContent = 'Previous';
+        prevButton.onclick = () => prevPage();
+
+        const nextButton = document.createElement('button');
+        nextButton.textContent = 'Next';
+        nextButton.onclick = () => nextPage();
+
+
+        function showNotification(message, type = 'info') {
+            const notif = document.createElement('div');
+            notif.textContent = message;
+            notif.className = type; // 'error', 'success', or default
+            notificationsDiv.innerHTML = ''; // Clear previous notifications
+            notificationsDiv.appendChild(notif);
+        }
+
+        async function saveCookies() {
+            const cookieJson = document.getElementById('cookieJson').value;
+            try {
+                const parsedCookies = JSON.parse(cookieJson);
+                const response = await fetch('/api/set_cookies', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cookies: parsedCookies })
+                });
+                const result = await response.json();
+                if (response.ok) {
+                    showNotification('Cookies saved successfully!', 'success');
+                } else {
+                    showNotification(`Error saving cookies: ${result.detail}`, 'error');
+                }
+            } catch (e) {
+                showNotification(`Invalid JSON format for cookies: ${e.message}`, 'error');
+            }
+        }
+
+        async function startDownload() {
+            progressAreaDiv.innerHTML = 'Attempting to start download...';
+            showNotification('Attempting to start download...', 'info');
+            try {
+                const response = await fetch('/api/start_download', { method: 'POST' });
+                const result = await response.json();
+                if (response.ok) {
+                    showNotification(result.message || 'Download started!', 'success');
+                    monitorProgress(); // Start monitoring progress
+                } else {
+                    showNotification(`Error starting download: ${result.detail}`, 'error');
+                    progressAreaDiv.innerHTML = `Error: ${result.detail}`;
+                }
+            } catch (e) {
+                showNotification(`Network error starting download: ${e.message}`, 'error');
+                progressAreaDiv.innerHTML = `Network error: ${e.message}`;
+            }
+        }
+
+        let progressInterval;
+        async function monitorProgress() {
+            if (progressInterval) clearInterval(progressInterval); // Clear existing interval if any
+
+            progressInterval = setInterval(async () => {
+                try {
+                    const response = await fetch('/api/download_progress');
+                    const progress = await response.json();
+                    
+                    if (response.ok) {
+                        progressAreaDiv.innerHTML = `
+                            Running: ${progress.is_running} <br>
+                            Total Files: ${progress.total_files} <br>
+                            Downloaded: ${progress.downloaded_files} <br>
+                            Current File: ${progress.current_file || 'N/A'} <br>
+                            Error: ${progress.error || 'None'}
+                        `;
+                        if (progress.error) {
+                             showNotification(`Download error: ${progress.error}`, 'error');
+                        }
+                        if (!progress.is_running && progress.total_files > 0 && progress.downloaded_files === progress.total_files && !progress.error) {
+                            showNotification('Download completed successfully!', 'success');
+                            clearInterval(progressInterval);
+                            loadGallery(); // Auto-refresh gallery on completion
+                        } else if (!progress.is_running && (progress.error || progress.downloaded_files < progress.total_files)) {
+                            showNotification('Download finished, but with errors or not all files downloaded.', 'error');
+                            clearInterval(progressInterval);
+                        }
+                    } else {
+                        progressAreaDiv.innerHTML = 'Error fetching progress.';
+                        showNotification('Error fetching progress.', 'error');
+                        // clearInterval(progressInterval); // Optionally stop if progress endpoint fails consistently
+                    }
+                } catch (e) {
+                    progressAreaDiv.innerHTML = 'Network error fetching progress.';
+                    showNotification('Network error fetching progress.', 'error');
+                    // clearInterval(progressInterval); // Optionally stop on network error
+                }
+            }, 2000); // Fetch progress every 2 seconds
+        }
+
+        async function loadGallery() { // Uses global currentGalleryOffset and galleryLimit
+            galleryAreaDiv.innerHTML = 'Loading gallery...';
+            showNotification('Loading gallery...', 'info');
+
+            const paginationControlsDiv = document.getElementById('galleryPagination');
+            if (!paginationControlsDiv.contains(prevButton)) { // Add buttons only if not already there
+                 paginationControlsDiv.appendChild(prevButton);
+            }
+            if (!paginationControlsDiv.contains(nextButton)) {
+                 paginationControlsDiv.appendChild(nextButton);
+            }
+
+            try {
+                const response = await fetch(`/api/photos?offset=${currentGalleryOffset}&limit=${galleryLimit}`);
+                const photos = await response.json();
+
+                if (response.ok) {
+                    if (photos.length === 0 && currentGalleryOffset === 0) {
+                        galleryAreaDiv.innerHTML = 'No photos found. Ensure cookies are set and download is complete.';
+                        showNotification('Gallery: No photos found.', 'info');
+                        prevButton.disabled = true;
+                        nextButton.disabled = true;
+                        return;
+                    } else if (photos.length === 0 && currentGalleryOffset > 0) {
+                        // Landed on an empty page (likely past the end)
+                        galleryAreaDiv.innerHTML = 'No more photos on this page. Try "Previous".';
+                        showNotification('Gallery: No more photos.', 'info');
+                        // currentGalleryOffset -= galleryLimit; // Revert offset, handled by user clicking prev
+                        prevButton.disabled = currentGalleryOffset === 0; // prevButton should still be enabled if currentGalleryOffset > 0
+                        nextButton.disabled = true; // No photos here, so definitely no next
+                        return;
+                    }
+
+                    galleryAreaDiv.innerHTML = ''; // Clear previous content
+                    photos.forEach(photo => {
+                        const img = document.createElement('img');
+                        img.src = photo.url;
+                        img.alt = photo.filename;
+                        img.title = photo.filename;
+                        galleryAreaDiv.appendChild(img);
+                    });
+                    showNotification(`Gallery loaded showing ${photos.length} items. Page: ${(currentGalleryOffset / galleryLimit) + 1}`, 'success');
+
+                    // Update button states
+                    prevButton.disabled = currentGalleryOffset === 0;
+                    nextButton.disabled = photos.length < galleryLimit;
+
+                } else {
+                    const errorDetail = photos.detail || 'Unknown error';
+                    galleryAreaDiv.innerHTML = `Error loading gallery: ${errorDetail}`;
+                    showNotification(`Error loading gallery: ${errorDetail}`, 'error');
+                    prevButton.disabled = true;
+                    nextButton.disabled = true;
+                }
+            } catch (e) {
+                galleryAreaDiv.innerHTML = `Network error loading gallery: ${e.message}`;
+                showNotification(`Network error loading gallery: ${e.message}`, 'error');
+                prevButton.disabled = true;
+                nextButton.disabled = true;
+            }
+        }
+
+        function nextPage() {
+            currentGalleryOffset += galleryLimit;
+            loadGallery();
+        }
+
+        function prevPage() {
+            currentGalleryOffset -= galleryLimit;
+            if (currentGalleryOffset < 0) currentGalleryOffset = 0;
+            loadGallery();
+        }
+
+        function refreshGalleryFirstPage() {
+            currentGalleryOffset = 0;
+            loadGallery();
+        }
+        
+        // Initial state of buttons (optional, as loadGallery will set them)
+        // prevButton.disabled = true;
+        // nextButton.disabled = true; // Assuming gallery not loaded initially
+        
+        // Let's not do it on window.onload for now to avoid errors if cookies not set. User can click "Refresh Gallery".
+    </script>
+</body>
+</html>

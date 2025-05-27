@@ -413,7 +413,7 @@ class AmazonPhotos:
             # self.refresh_db(filters=[f'createdDate:[{convert_ts(t0 - lb_offset)} TO {convert_ts(time.time() + ub_offset)}]'])
         return res
 
-    def download(self, node_ids: list[str] | pd.Series, out: str = 'media', chunk_size: int = None, **kwargs) -> dict:
+    def download(self, node_ids: list[str] | pd.Series, out: str = 'media', chunk_size: int = 8192, progress_callback: callable = None, **kwargs) -> dict:
         """
         Download files from Amazon Photos
 
@@ -422,35 +422,59 @@ class AmazonPhotos:
 
         @param node_ids: list of media node ids to download
         @param out: path to save files
+        @param chunk_size: chunk size for streaming downloads
+        @param progress_callback: optional callable to report progress for each file.
+                                  It should accept (node_id, filename, status, error_message).
         """
 
-        if isinstance(node_ids, pd.Series):
+        if isinstance(node_ids, pd.Series): # Moved this check to the beginning
             node_ids = node_ids.tolist()
 
-        out = Path(out)
-        out.mkdir(parents=True, exist_ok=True)
+        out_path = Path(out) # Renamed 'out' to 'out_path'
+        out_path.mkdir(parents=True, exist_ok=True)
         params = {
             'querySuffix': '?download=true',
-            'ownerId': self.root['ownerId'],
+            'ownerId': self.root['ownerId'], # Ensured ownerId is in params
         }
 
-        async def get(client: AsyncClient, sem: asyncio.Semaphore, node: str) -> None:
+        async def get(client: AsyncClient, sem: asyncio.Semaphore, node: str, progress_callback_async: callable = None): # Added progress_callback_async
             logger.debug(f'Downloading {node}')
+            fname_for_cb = None # Filename for callback in case of error before fname is set
+            safe_fname = None # Sanitized filename
             try:
                 async with sem:
                     url = f'{self.drive_url}/nodes/{node}/contentRedirection'
                     async with client.stream('GET', url, params=params) as r:
+                        r.raise_for_status() # Check for HTTP errors early
                         content_disposition = dict([y for x in r.headers['content-disposition'].split('; ') if len((y := x.split('='))) > 1])
                         fname = content_disposition['filename'].strip('"')
-                        async with aiofiles.open(f"{out}/{node}_{fname}", 'wb') as fp:
-                            async for chunk in r.aiter_bytes(chunk_size):
-                                await fp.write(chunk)
-            except Exception as e:
-                logger.debug(f'Download FAILED for {node}\t{e}')
+                        fname_for_cb = fname # Store original filename for callback if sanitization fails or error occurs early
 
-        fns = (partial(get, node=node) for node in node_ids)
+                        # Basic filename sanitization
+                        safe_fname = "".join(c if c.isalnum() or c in ['.', '_', '-'] else '_' for c in fname)
+                        if not safe_fname: # Handle empty sanitized filename
+                            safe_fname = f"downloaded_file_{node}"
+                        
+                        file_path = out_path / f"{node}_{safe_fname}"
+
+                        async with aiofiles.open(file_path, 'wb') as fp:
+                            async for chunk in r.aiter_bytes(chunk_size): # Use the passed chunk_size
+                                await fp.write(chunk)
+                        
+                        if progress_callback_async:
+                            progress_callback_async(node_id=node, filename=safe_fname, status="success", error_message=None)
+            
+            except Exception as e:
+                logger.debug(f'Download FAILED for {node} {e}')
+                if progress_callback_async:
+                    # Use safe_fname if available, else original fname_for_cb, else None
+                    filename_to_report = safe_fname if safe_fname else fname_for_cb 
+                    progress_callback_async(node_id=node, filename=filename_to_report, status="failure", error_message=str(e))
+
+        # Pass the progress_callback to the partial function, renamed to progress_callback_async for clarity in 'get'
+        fns = (partial(get, node=node, progress_callback_async=progress_callback) for node in node_ids)
         asyncio.run(self.process(fns, desc='Downloading media', **kwargs))
-        return {'timestamp': time.time_ns(), 'nodes': node_ids}
+        return {'timestamp': time.time_ns(), 'nodes': node_ids, 'output_path': str(out_path)} # Added output_path
 
     def trashed(self, filters: str = '', offset: int = 0, limit: int = MAX_LIMIT, sort: str = "['modifiedDate DESC']", **kwargs) -> list[dict]:
         """

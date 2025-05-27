@@ -1,0 +1,37 @@
+# Git files
+.git/
+.gitignore
+
+# Python specific
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+*.env
+env/
+venv/
+ENV/
+# IDE / Editor specific
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Local data and downloaded media - these should be handled by volumes in production
+media_downloads/
+ap.parquet
+*.db
+*.sqlite3
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+
+# Docker specific (if any local Docker files not part of the main image)
+# Dockerfile (already used by build context, but good practice if you have multiple Dockerfiles)
+# .dockerignore (this file itself)
+
+# OS specific
+.DS_Store
+Thumbs.db
