@@ -148,9 +148,7 @@ class AmazonPhotos:
                         return r
 
                     if r.status_code == 401:  # BadAuthenticationData
-                        logger.error(f'{r.status_code} {r.text}')
-                        logger.error(f'Cookies expired. Log in to Amazon Photos and copy fresh cookies.')
-                        # sys.exit(1)
+                        raise PermissionError('Cookies expired. Log in to Amazon Photos and copy fresh cookies.')
 
                     r.raise_for_status()
 
@@ -158,6 +156,8 @@ class AmazonPhotos:
                         async with aiofiles.open(f'{self.tmp}/{time.time_ns()}', 'wb') as fp:
                             await fp.write(r.content)
                     return r
+            except PermissionError:
+                raise
             except Exception as e:
                 if i == max_retries:
                     logger.debug(f'Max retries exceeded\n{e}')
@@ -185,9 +185,7 @@ class AmazonPhotos:
                         # sys.exit(1)
 
                 if r.status_code == 401:  # "BadAuthenticationData"
-                    logger.error(f'{r.status_code} {r.text}')
-                    logger.error(f'Cookies expired. Log in to Amazon Photos and copy fresh cookies.')
-                    # sys.exit(1) ## testing
+                    raise PermissionError('Cookies expired. Log in to Amazon Photos and copy fresh cookies.')
 
                 r.raise_for_status()
 
@@ -195,6 +193,8 @@ class AmazonPhotos:
                     with open(f'{self.tmp}/{time.time_ns()}', 'wb') as fp:
                         fp.write(r.content)
                 return r
+            except PermissionError:
+                raise
             except Exception as e:
                 if i == max_retries:
                     logger.debug(f'Max retries exceeded\n{e}')
@@ -371,11 +371,11 @@ class AmazonPhotos:
                                 # sys.exit(1)
 
                         if r.status_code == 401:  # BadAuthenticationData
-                            logger.error(f'{r.status_code} {r.text}')
-                            logger.error(f'Cookies expired. Log in to Amazon Photos and copy fresh cookies.')
-                            # sys.exit(1)
+                            raise PermissionError('Cookies expired. Log in to Amazon Photos and copy fresh cookies.')
                         r.raise_for_status()
                         return r
+                except PermissionError:
+                    raise
                 except Exception as e:
                     if i == max_retries:
                         logger.debug(f'Max retries exceeded\n{e}')
