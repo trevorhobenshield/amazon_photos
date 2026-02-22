@@ -611,12 +611,9 @@ class AmazonPhotos:
             }
         )
         data = r.json()['aggregations']
-        path = f'{category}.json' if category else out
         if out:
-            # save to disk
-            _out = Path(path)
-            _out.mkdir(parents=True, exist_ok=True)
-            _out.write_bytes(orjson.dumps(data))
+            _out = Path(f'{category}.json')
+            _out.write_bytes(orjson.dumps(data, option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS))
         return data
 
     def favorite(self, node_ids: list[str] | pd.Series, **kwargs) -> list[dict]:
