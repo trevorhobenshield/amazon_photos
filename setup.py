@@ -12,6 +12,7 @@ install_requires = [
     'orjson',
     'httpx[http2]',
     'pandas',
+    'pyarrow',
     'psutil',
 ]
 
