@@ -67,6 +67,8 @@ def format_nodes(df: pd.DataFrame) -> pd.DataFrame | None:
     valid_cols = []  # maintain cols order for readability
     [valid_cols.append(c) for c in cols if c in df.columns]
     df = df[valid_cols + list(set(df.columns) - set(cols))]
+    if 'id' in df.columns:
+        df = df.drop_duplicates('id')
     try:
         return (
             df
