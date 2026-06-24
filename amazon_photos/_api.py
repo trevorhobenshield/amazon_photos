@@ -641,7 +641,7 @@ class AmazonPhotos:
                 })
                 return r.json()
 
-        fns = (partial(patch, ids=ids) for ids in node_ids)
+        fns = (partial(patch, node_id=node_id) for node_id in node_ids)
         return asyncio.run(self.process(fns, desc='adding media to favorites', **kwargs))
 
     def unfavorite(self, node_ids: list[str] | pd.Series, **kwargs) -> list[dict]:
@@ -666,7 +666,7 @@ class AmazonPhotos:
                 })
                 return r.json()
 
-        fns = (partial(patch, ids=ids) for ids in node_ids)
+        fns = (partial(patch, node_id=node_id) for node_id in node_ids)
         return asyncio.run(self.process(fns, desc='removing media from favorites', **kwargs))
 
     def create_album(self, album_name: str, node_ids: list[str] | pd.Series):
