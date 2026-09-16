@@ -46,7 +46,12 @@ logger = getLogger(list(Logger.manager.loggerDict)[-1])
 class AmazonPhotos:
     def __init__(self, cookies: dict, db_path: str | Path = 'ap.parquet', tmp: str = '', **kwargs):
         self.n_threads = psutil.cpu_count(logical=True)
-        self.tld = self.determine_tld(cookies)
+        # Normalize cookie keys (accept both hyphens and underscores)
+        self.cookies = dict(cookies)
+        for k, v in list(cookies.items()):
+            self.cookies[k.replace('_', '-')] = v
+            self.cookies[k.replace('-', '_')] = v
+        self.tld = kwargs.pop('tld', None) or self.determine_tld(self.cookies)
         self.drive_url = f'https://www.amazon.{self.tld}/drive/v1'
         self.cdproxy_url = self.determine_cdproxy(kwargs.pop('cdproxy_override', None))
         self.thumb_url = f'https://thumbnails-photos.amazon.{self.tld}/v1/thumbnail'  # /{node_id}?ownerId={ap.root["ownerId"]}&viewBox={width}'
@@ -61,23 +66,26 @@ class AmazonPhotos:
             max_keepalive_connections=None,
             keepalive_expiry=5.0,
         ))
+        session_id = cookies.get('session-id') or self.cookies.get('session_id') or ''
         self.client = Client(
             http2=False,  # todo: "Max outbound streams is 128, 128 open" errors with http2?
             follow_redirects=True,
             timeout=60,
             headers={
                 'user-agent': random.choice(USER_AGENTS),
-                'x-amzn-sessionid': cookies['session-id'],
+                'x-amzn-sessionid': session_id,
             },
-            cookies=cookies
+            cookies=self.cookies
         )
         self.tmp = Path(tmp)
         self.tmp.mkdir(parents=True, exist_ok=True)
         self.db_path = Path(db_path).expanduser()
+        init_db = kwargs.pop('init_db', True)
+        init_folders = kwargs.pop('init_folders', True)
         self.root = self.get_root()
-        self.folders = self.get_folders()
-        self.db = self.load_db(**kwargs)
-        self.tree = self.build_tree()
+        self.folders = self.get_folders() if init_folders else []
+        self.db = self.load_db(**kwargs) if init_db else None
+        self.tree = self.build_tree() if init_folders else {}
 
     def determine_tld(self, cookies: dict) -> str:
         """
@@ -87,10 +95,11 @@ class AmazonPhotos:
         @return: top-level domain
         """
         for k, v in cookies.items():
-            if k.endswith('_main'):
+            if k.endswith('_main') or k.endswith('-main'):
                 return 'com'
-            if k.startswith(x := 'at-acb'):
+            if k.startswith(x := 'at-acb') or k.startswith(x := 'ubid-acb') or k.startswith(x := 'at_acb') or k.startswith(x := 'ubid_acb'):
                 return k.split(x)[-1]
+        return 'com'
 
     def determine_cdproxy(self, override: str = None):
         """
@@ -148,9 +157,7 @@ class AmazonPhotos:
                         return r
 
                     if r.status_code == 401:  # BadAuthenticationData
-                        logger.error(f'{r.status_code} {r.text}')
-                        logger.error(f'Cookies expired. Log in to Amazon Photos and copy fresh cookies.')
-                        # sys.exit(1)
+                        raise PermissionError('Cookies expired or invalid. Log in to Amazon Photos and copy fresh cookies.')
 
                     r.raise_for_status()
 
@@ -158,6 +165,8 @@ class AmazonPhotos:
                         async with aiofiles.open(f'{self.tmp}/{time.time_ns()}', 'wb') as fp:
                             await fp.write(r.content)
                     return r
+            except PermissionError:
+                raise
             except Exception as e:
                 if i == max_retries:
                     logger.debug(f'Max retries exceeded\n{e}')
@@ -185,9 +194,7 @@ class AmazonPhotos:
                         # sys.exit(1)
 
                 if r.status_code == 401:  # "BadAuthenticationData"
-                    logger.error(f'{r.status_code} {r.text}')
-                    logger.error(f'Cookies expired. Log in to Amazon Photos and copy fresh cookies.')
-                    # sys.exit(1) ## testing
+                    raise PermissionError('Cookies expired or invalid. Log in to Amazon Photos and copy fresh cookies.')
 
                 r.raise_for_status()
 
@@ -195,6 +202,8 @@ class AmazonPhotos:
                     with open(f'{self.tmp}/{time.time_ns()}', 'wb') as fp:
                         fp.write(r.content)
                 return r
+            except PermissionError:
+                raise
             except Exception as e:
                 if i == max_retries:
                     logger.debug(f'Max retries exceeded\n{e}')
@@ -371,11 +380,11 @@ class AmazonPhotos:
                                 # sys.exit(1)
 
                         if r.status_code == 401:  # BadAuthenticationData
-                            logger.error(f'{r.status_code} {r.text}')
-                            logger.error(f'Cookies expired. Log in to Amazon Photos and copy fresh cookies.')
-                            # sys.exit(1)
+                            raise PermissionError('Cookies expired or invalid. Log in to Amazon Photos and copy fresh cookies.')
                         r.raise_for_status()
                         return r
+                except PermissionError:
+                    raise
                 except Exception as e:
                     if i == max_retries:
                         logger.debug(f'Max retries exceeded\n{e}')
@@ -611,12 +620,9 @@ class AmazonPhotos:
             }
         )
         data = r.json()['aggregations']
-        path = f'{category}.json' if category else out
         if out:
-            # save to disk
-            _out = Path(path)
-            _out.mkdir(parents=True, exist_ok=True)
-            _out.write_bytes(orjson.dumps(data))
+            _out = Path(f'{category}.json')
+            _out.write_bytes(orjson.dumps(data, option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS))
         return data
 
     def favorite(self, node_ids: list[str] | pd.Series, **kwargs) -> list[dict]:
@@ -968,7 +974,7 @@ class AmazonPhotos:
             for task in tasks:
                 task.cancel()
             results = await asyncio.gather(*tasks, return_exceptions=True)
-            return [y for x in results if x for y in x]
+            return [y for x in results if x and not isinstance(x, BaseException) for y in x]
 
         folders = asyncio.run(main([{'id': self.root['id']}]))
         return folders

@@ -12,7 +12,8 @@ install_requires = [
     'orjson',
     'httpx[http2]',
     'pandas',
-    'psutil',
+    'pyarrow',
+    'python-dotenv',
 ]
 
 extras_require = {

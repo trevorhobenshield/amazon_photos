@@ -127,6 +127,9 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+cookies.json
+*.parquet
+*.csv
 
 # Spyder project settings
 .spyderproject
